@@ -3,13 +3,15 @@
 //|                          Professional Pairs Trading Dashboard    |
 //|                                        Author: RafaB Dembski    |
 //|     Features: Spearman, Cointegration, Z-Score, Multi-Timeframe |
+//|               + Advanced Position Size Calculator                |
 //+------------------------------------------------------------------+
 #property copyright "RafaB Dembski"
 #property description "Pairs Trading Dashboard - Correlation Scanner with Z-Score & Cointegration Analysis"
-#property version   "2.00"
+#property version   "2.10"
 #property strict
 
 #include "DLogic_PairsDash.mqh"
+#include "DLogic_Calculator.mqh"
 
 // ============================================================
 // INPUT PARAMETERS
@@ -42,12 +44,21 @@ input bool     Inp_AlertsEnabled = true;         // Enable sound alerts
 input bool     Inp_PushEnabled = false;          // Enable push notifications
 input bool     Inp_EmailEnabled = false;         // Enable email alerts
 
+input group "=== POSITION CALCULATOR ==="
+input bool     Inp_ShowCalculator = true;        // Show Position Calculator
+input double   Inp_DefaultRisk = 1.0;            // Default Risk % (0.1-10)
+input double   Inp_DefaultSL = 50;               // Default Stop Loss (pips)
+input double   Inp_DefaultTP = 100;              // Default Take Profit (pips)
+input int      Inp_CalcX = 500;                  // Calculator X position
+input int      Inp_CalcY = 30;                   // Calculator Y position
+
 // ============================================================
 // GLOBAL OBJECTS
 // ============================================================
 
-C_PairsCore      *PairsEngine;
-C_PairsDashboard *Dashboard;
+C_PairsCore           *PairsEngine;
+C_PairsDashboard      *Dashboard;
+C_PositionCalculator  *Calculator;
 
 string           g_symbols[];
 int              g_symbolCount;
@@ -305,8 +316,9 @@ void OpenPairCharts(string sym1, string sym2, ENUM_TIMEFRAMES tf) {
 //+------------------------------------------------------------------+
 int OnInit() {
    Print("==============================================");
-   Print("   D-LOGIC PAIRS TRADING DASHBOARD v2.00");
+   Print("   D-LOGIC PAIRS TRADING DASHBOARD v2.10");
    Print("   Spearman | Cointegration | Z-Score");
+   Print("   + Position Size Calculator");
    Print("   Author: RafaB Dembski");
    Print("==============================================");
 
@@ -317,6 +329,18 @@ int OnInit() {
    // Initialize dashboard
    Dashboard = new C_PairsDashboard();
    Dashboard.SetPosition(Inp_DashX, Inp_DashY);
+
+   // Initialize position calculator
+   Calculator = new C_PositionCalculator();
+   Calculator.SetPosition(Inp_CalcX, Inp_CalcY);
+   Calculator.SetSymbol(_Symbol);
+   Calculator.SetRiskParams(Inp_DefaultRisk, Inp_DefaultSL, Inp_DefaultTP);
+
+   if(Inp_ShowCalculator) {
+      Calculator.Calculate();
+      Calculator.Draw();
+      Print("[CALC] Position Calculator initialized");
+   }
 
    // Initialize timeframes
    InitializeTimeframes();
@@ -349,10 +373,12 @@ int OnInit() {
 void OnDeinit(const int reason) {
    EventKillTimer();
 
+   if(CheckPointer(Calculator) == POINTER_DYNAMIC) delete Calculator;
    if(CheckPointer(Dashboard) == POINTER_DYNAMIC) delete Dashboard;
    if(CheckPointer(PairsEngine) == POINTER_DYNAMIC) delete PairsEngine;
 
    ObjectsDeleteAll(0, "DL_PAIRS_");
+   ObjectsDeleteAll(0, "DL_CALC_");
 
    string reasonText;
    switch(reason) {
@@ -399,7 +425,14 @@ void OnTimer() {
 //| ChartEvent function                                               |
 //+------------------------------------------------------------------+
 void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam) {
+   // Handle object clicks
    if(id == CHARTEVENT_OBJECT_CLICK) {
+      // First check calculator clicks
+      if(Calculator != NULL && Calculator.HandleClick(sparam)) {
+         return;  // Calculator handled the click
+      }
+
+      // Then check dashboard clicks
       string pair1, pair2;
       ENUM_TIMEFRAMES tf;
 
@@ -411,15 +444,29 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
             RunScan();
             break;
 
-         case 2:  // Row clicked - open charts
+         case 2:  // Row clicked - open charts and update calculator
             Print("[PAIRS] Selected: ", pair1, " / ", pair2, " on ", GetTFName(tf));
             OpenPairCharts(pair1, pair2, tf);
+
+            // Update calculator with selected pair
+            if(Calculator != NULL && Inp_ShowCalculator) {
+               Calculator.SetSymbol(pair1);
+               Calculator.Calculate();
+               Calculator.Draw();
+            }
             break;
 
          case 3:  // Symbol filter changed
             Print("[PAIRS] Filter: ", Dashboard.GetSelectedSymbol());
             RunScan();  // Rescan with filter
             break;
+      }
+   }
+
+   // Handle edit box Enter key
+   if(id == CHARTEVENT_OBJECT_ENDEDIT) {
+      if(Calculator != NULL) {
+         Calculator.HandleEndEdit(sparam);
       }
    }
 
@@ -430,6 +477,22 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
          int displayCount = MathMin(g_resultCount, Inp_MaxPairs);
          Dashboard.UpdateResults(g_results, displayCount);
          Dashboard.DrawSymbolButtons(g_symbols, g_symbolCount);
+      }
+
+      // Redraw calculator
+      if(Calculator != NULL && Inp_ShowCalculator) {
+         Calculator.Draw();
+      }
+   }
+
+   // Handle keyboard shortcuts
+   if(id == CHARTEVENT_KEYDOWN) {
+      // 'C' key to toggle calculator
+      if(lparam == 'C' || lparam == 'c') {
+         if(Calculator != NULL) {
+            Calculator.ToggleVisibility();
+            Print("[CALC] Calculator ", Calculator.IsVisible() ? "shown" : "hidden");
+         }
       }
    }
 }
