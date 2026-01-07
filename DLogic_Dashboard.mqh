@@ -1156,6 +1156,43 @@ public:
    bool IsVisible() {
       return m_isVisible;
    }
+
+   //+------------------------------------------------------------------+
+   //| Get Signal Strength                                               |
+   //+------------------------------------------------------------------+
+   double GetSignalStrength() {
+      return m_signalStrength;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Record Signal to history                                          |
+   //+------------------------------------------------------------------+
+   void RecordSignal(string pairName, int signal, double zScore, double strength) {
+      if(m_historyCount >= m_maxHistory) {
+         // Shift history
+         for(int i = m_maxHistory - 1; i > 0; i--) {
+            m_signalHistory[i] = m_signalHistory[i - 1];
+         }
+         m_historyCount = m_maxHistory;
+      } else {
+         m_historyCount++;
+      }
+
+      // Add new signal at beginning
+      for(int i = m_historyCount - 1; i > 0; i--) {
+         m_signalHistory[i] = m_signalHistory[i - 1];
+      }
+
+      m_signalHistory[0].time = TimeCurrent();
+      m_signalHistory[0].pairName = pairName;
+      m_signalHistory[0].signal = signal;
+      m_signalHistory[0].zScore = zScore;
+      m_signalHistory[0].strength = strength;
+      m_signalHistory[0].executed = false;
+      m_signalHistory[0].entryPL = 0;
+
+      m_perfStats.totalSignals++;
+   }
 };
 
 //+------------------------------------------------------------------+
