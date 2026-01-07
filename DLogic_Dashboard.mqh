@@ -1005,6 +1005,157 @@ public:
       ZeroMemory(m_perfStats);
       m_perfStats.profitFactor = 1.0;
    }
+
+   // ============================================================
+   // COMPATIBILITY METHODS (for main EA interface)
+   // ============================================================
+
+   //+------------------------------------------------------------------+
+   //| Set Position (stub - not used in overlay mode)                    |
+   //+------------------------------------------------------------------+
+   void SetPosition(int x, int y) {
+      // Not used in overlay mode - panels positioned dynamically
+   }
+
+   //+------------------------------------------------------------------+
+   //| Configure Alerts                                                  |
+   //+------------------------------------------------------------------+
+   void ConfigureAlerts(bool enabled, double zThreshold, double strengthThreshold) {
+      m_alertsEnabled = enabled;
+      // Store thresholds for alert processing
+   }
+
+   //+------------------------------------------------------------------+
+   //| Are Alerts Enabled                                                |
+   //+------------------------------------------------------------------+
+   bool AreAlertsEnabled() {
+      return m_alertsEnabled;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Sort By Z-Score (sort the results array)                          |
+   //+------------------------------------------------------------------+
+   void SortByZScore() {
+      // Sort by absolute Z-Score descending
+      for(int i = 0; i < m_resultCount - 1; i++) {
+         for(int j = 0; j < m_resultCount - i - 1; j++) {
+            if(MathAbs(m_scanResults[j].zScore) < MathAbs(m_scanResults[j + 1].zScore)) {
+               SPairResult temp = m_scanResults[j];
+               m_scanResults[j] = m_scanResults[j + 1];
+               m_scanResults[j + 1] = temp;
+            }
+         }
+      }
+   }
+
+   //+------------------------------------------------------------------+
+   //| Update Spread History (array version)                             |
+   //+------------------------------------------------------------------+
+   void UpdateSpreadHistory(double &spread[], double &zScore[], int size) {
+      // Copy arrays to internal storage
+      int copySize = MathMin(size, m_historySize);
+      for(int i = 0; i < copySize; i++) {
+         m_spreadHistory[i] = spread[i];
+         m_zScoreHistory[i] = zScore[i];
+      }
+   }
+
+   //+------------------------------------------------------------------+
+   //| Record Trade Result                                               |
+   //+------------------------------------------------------------------+
+   void RecordTradeResult(double profit) {
+      bool isWin = profit >= 0;
+      AddTradeResult(profit, isWin);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Update Info (positions, P&L, etc.)                                |
+   //+------------------------------------------------------------------+
+   void UpdateInfo(double unrealizedPL, int positionCount, double maxDD, double activeBeta) {
+      m_perfStats.maxDrawdown = maxDD;
+      // Other info can be displayed if needed
+   }
+
+   //+------------------------------------------------------------------+
+   //| Handle Click - returns action code and fills pair info            |
+   //+------------------------------------------------------------------+
+   int HandleClick(string objName, string &symbolA, string &symbolB, double &beta) {
+      if(StringFind(objName, m_prefix) < 0) return 0;
+
+      string name = StringSubstr(objName, StringLen(m_prefix));
+
+      // Button clicks
+      if(name == "BTN_SCAN") {
+         return 1;  // Scan
+      }
+      else if(name == "BTN_TRADE") {
+         // Fill selected pair info
+         if(m_selectedRow >= 0 && m_selectedRow < m_resultCount) {
+            symbolA = m_scanResults[m_selectedRow].symbolA;
+            symbolB = m_scanResults[m_selectedRow].symbolB;
+            beta = m_scanResults[m_selectedRow].beta;
+         }
+         return 2;  // Execute
+      }
+      else if(name == "BTN_CLOSE") {
+         return 3;  // Close all
+      }
+
+      // Row selection
+      for(int i = 0; i < 4; i++) {
+         if(StringFind(name, "SC_R" + IntegerToString(i) + "_") >= 0) {
+            int newSel = i + m_scrollOffset;
+            if(newSel < m_resultCount) {
+               m_selectedRow = newSel;
+               symbolA = m_scanResults[m_selectedRow].symbolA;
+               symbolB = m_scanResults[m_selectedRow].symbolB;
+               beta = m_scanResults[m_selectedRow].beta;
+
+               if(m_resultCount > 0) {
+                  m_currentRegime = DetectRegime(m_scanResults[m_selectedRow]);
+                  m_signalStrength = CalculateSignalStrength(m_scanResults[m_selectedRow]);
+               }
+               return 4;  // Row selected
+            }
+         }
+      }
+
+      return 0;  // No action
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get Selected Pair (4 parameter version)                           |
+   //+------------------------------------------------------------------+
+   bool GetSelectedPair(string &symbolA, string &symbolB, double &beta, double &zScore) {
+      if(m_selectedRow >= 0 && m_selectedRow < m_resultCount) {
+         symbolA = m_scanResults[m_selectedRow].symbolA;
+         symbolB = m_scanResults[m_selectedRow].symbolB;
+         beta = m_scanResults[m_selectedRow].beta;
+         zScore = m_scanResults[m_selectedRow].zScore;
+         return true;
+      }
+      return false;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Toggle Visibility                                                 |
+   //+------------------------------------------------------------------+
+   void ToggleVisibility() {
+      m_isVisible = !m_isVisible;
+      if(m_isVisible) {
+         Draw();
+      } else {
+         DeleteAll();
+         ChartRedraw(0);
+      }
+   }
+
+   //+------------------------------------------------------------------+
+   //| Is Visible                                                        |
+   //+------------------------------------------------------------------+
+   bool IsVisible() {
+      return m_isVisible;
+   }
 };
 
 //+------------------------------------------------------------------+
