@@ -3,11 +3,8 @@
 //|              D-LOGIC Professional Pairs Trading Dashboard         |
 //|                                        Author: Rafał Dembski     |
 //|                                                                   |
-//|  Dark/Neon Aesthetic - Institutional Grade UI                     |
-//|  - Scanner Heatmap                                                |
-//|  - Spread Visualization                                           |
-//|  - Z-Score Histogram                                              |
-//|  - Risk Management Panel                                          |
+//|  3-Panel Layout: TOP (Scanner) | BOTTOM (Charts) | RIGHT (Analytics)
+//|  Advanced Features: Regime Detection, Signal Strength, Risk Metrics
 //+------------------------------------------------------------------+
 #property copyright "Rafał Dembski"
 #property strict
@@ -23,41 +20,64 @@
 #define CLR_BG_ROW         C'12,14,20'      // Row background
 #define CLR_BG_ROW_ALT     C'18,20,28'      // Alternate row
 #define CLR_BG_HOVER       C'30,35,50'      // Hover state
+#define CLR_BG_CHART       C'10,12,18'      // Chart background
 
 #define CLR_NEON_GREEN     C'0,255,128'     // Long/Profit
 #define CLR_NEON_RED       C'255,60,80'     // Short/Loss
 #define CLR_NEON_CYAN      C'0,220,255'     // Info/Neutral
 #define CLR_NEON_YELLOW    C'255,220,50'    // Warning
 #define CLR_NEON_MAGENTA   C'255,50,200'    // Highlight
+#define CLR_NEON_ORANGE    C'255,150,50'    // Alert
 
 #define CLR_TEXT_BRIGHT    C'240,245,255'   // Primary text
 #define CLR_TEXT_DIM       C'120,130,150'   // Secondary text
 #define CLR_TEXT_MUTED     C'70,80,100'     // Disabled text
 
 #define CLR_BORDER         C'40,45,60'      // Border
+#define CLR_BORDER_ACCENT  C'60,70,100'     // Accent border
 #define CLR_GRID           C'25,30,45'      // Grid lines
 
-#define CLR_BB_UPPER       C'0,180,255'     // Bollinger upper
-#define CLR_BB_LOWER       C'0,180,255'     // Bollinger lower
-#define CLR_BB_MIDDLE      C'100,150,200'   // Bollinger middle
+#define CLR_BB_UPPER       C'255,100,100'   // Bollinger upper (sell zone)
+#define CLR_BB_LOWER       C'100,255,150'   // Bollinger lower (buy zone)
+#define CLR_BB_MIDDLE      C'150,180,220'   // Bollinger middle
 #define CLR_SPREAD_LINE    C'255,255,255'   // Spread line
 
 // ============================================================
-// UI DIMENSIONS
+// UI DIMENSIONS - 3 PANEL LAYOUT
 // ============================================================
-#define SCANNER_WIDTH      420
-#define SCANNER_ROW_HEIGHT 20
-#define SCANNER_MAX_ROWS   15
 
-#define CHART_WIDTH        350
-#define CHART_HEIGHT       200
-#define ZSCORE_WIDTH       120
-#define ZSCORE_HEIGHT      200
+// Main container
+#define MAIN_WIDTH         950
+#define MAIN_HEIGHT        620
 
-#define CONTROL_HEIGHT     80
+// TOP PANEL (Scanner)
+#define TOP_PANEL_HEIGHT   280
+#define SCANNER_WIDTH      620
+#define SCANNER_ROW_HEIGHT 18
+#define SCANNER_MAX_ROWS   12
+
+// RIGHT PANEL (Analytics)
+#define RIGHT_PANEL_WIDTH  320
+#define RIGHT_PANEL_X      625
+
+// BOTTOM PANEL (Charts + Controls)
+#define BOTTOM_PANEL_Y     310
+#define SPREAD_CHART_W     500
+#define SPREAD_CHART_H     180
+#define CONTROL_HEIGHT     90
+
+// ============================================================
+// REGIME TYPES
+// ============================================================
+enum ENUM_REGIME {
+   REGIME_MEAN_REVERT,
+   REGIME_TRENDING,
+   REGIME_VOLATILE,
+   REGIME_CONSOLIDATION
+};
 
 //+------------------------------------------------------------------+
-//| CDashboard - Main UI Controller                                   |
+//| CDashboard - Professional 3-Panel UI Controller                   |
 //+------------------------------------------------------------------+
 class CDashboard {
 private:
@@ -77,6 +97,13 @@ private:
    double         m_spreadHistory[];
    double         m_zScoreHistory[];
    int            m_historySize;
+
+   // Analytics data
+   ENUM_REGIME    m_currentRegime;
+   double         m_signalStrength;
+   double         m_estimatedSharpe;
+   int            m_signalCount;
+   int            m_winCount;
 
    //+------------------------------------------------------------------+
    //| Create Rectangle                                                  |
@@ -143,123 +170,466 @@ private:
    //+------------------------------------------------------------------+
    color GetZScoreColor(double z) {
       double absZ = MathAbs(z);
+      if(absZ >= 2.5) return (z > 0) ? CLR_NEON_RED : CLR_NEON_GREEN;
+      if(absZ >= 2.0) return (z > 0) ? CLR_NEON_ORANGE : CLR_NEON_CYAN;
+      if(absZ >= 1.5) return CLR_NEON_YELLOW;
+      return CLR_TEXT_DIM;
+   }
 
-      if(absZ >= 2.0) {
-         return (z > 0) ? CLR_NEON_RED : CLR_NEON_GREEN;
-      } else if(absZ >= 1.5) {
-         return CLR_NEON_YELLOW;
-      } else if(absZ >= 1.0) {
-         return CLR_NEON_CYAN;
+   //+------------------------------------------------------------------+
+   //| Calculate Signal Strength (0-100)                                 |
+   //+------------------------------------------------------------------+
+   double CalcSignalStrength(SPairResult &result) {
+      double strength = 0;
+
+      // Z-Score component (0-40 points)
+      double absZ = MathAbs(result.zScore);
+      if(absZ >= 2.5) strength += 40;
+      else if(absZ >= 2.0) strength += 30;
+      else if(absZ >= 1.5) strength += 15;
+
+      // Cointegration component (0-30 points)
+      if(result.isCointegrated) strength += 30;
+
+      // R² component (0-20 points)
+      strength += result.rSquared * 20;
+
+      // Half-life component (0-10 points)
+      if(result.halfLife > 0 && result.halfLife < 30) {
+         strength += (30 - result.halfLife) / 3;
+      }
+
+      return MathMin(100, strength);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Detect Market Regime                                              |
+   //+------------------------------------------------------------------+
+   ENUM_REGIME DetectRegime(SPairResult &result) {
+      // Based on zero-crossings and half-life
+      if(result.zeroCrossings >= 15 && result.halfLife < 20) {
+         return REGIME_MEAN_REVERT;
+      }
+      if(result.zeroCrossings < 5) {
+         return REGIME_TRENDING;
+      }
+      if(result.spreadStdDev > result.spreadMean * 0.1) {
+         return REGIME_VOLATILE;
+      }
+      return REGIME_CONSOLIDATION;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get Regime Name                                                   |
+   //+------------------------------------------------------------------+
+   string GetRegimeName(ENUM_REGIME regime) {
+      switch(regime) {
+         case REGIME_MEAN_REVERT:   return "MEAN REVERSION";
+         case REGIME_TRENDING:      return "TRENDING";
+         case REGIME_VOLATILE:      return "HIGH VOLATILITY";
+         case REGIME_CONSOLIDATION: return "CONSOLIDATION";
+      }
+      return "UNKNOWN";
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get Regime Color                                                  |
+   //+------------------------------------------------------------------+
+   color GetRegimeColor(ENUM_REGIME regime) {
+      switch(regime) {
+         case REGIME_MEAN_REVERT:   return CLR_NEON_GREEN;
+         case REGIME_TRENDING:      return CLR_NEON_RED;
+         case REGIME_VOLATILE:      return CLR_NEON_ORANGE;
+         case REGIME_CONSOLIDATION: return CLR_NEON_YELLOW;
       }
       return CLR_TEXT_DIM;
    }
 
    //+------------------------------------------------------------------+
-   //| Draw Scanner Header                                               |
+   //| DRAW: Main Title Bar                                              |
    //+------------------------------------------------------------------+
-   void DrawScannerHeader(int x, int y) {
-      int colW[] = {140, 50, 70, 70, 80};  // Pair, TF, Z-Score, R², Signal
+   void DrawTitleBar(int x, int y, int w) {
+      CreateRect("TITLE_BG", x, y, w, 30, CLR_BG_HEADER, CLR_NEON_CYAN);
+      CreateLabel("TITLE", "D-LOGIC QUANT DASHBOARD v4.00", x + 12, y + 7, CLR_TEXT_BRIGHT, 11, "Consolas Bold");
+      CreateLabel("SUBTITLE", "Statistical Arbitrage Engine", x + 320, y + 9, CLR_NEON_CYAN, 9);
 
-      CreateRect("SCN_HDR", x, y, SCANNER_WIDTH, 24, CLR_BG_HEADER, CLR_BORDER);
+      // System status indicator
+      CreateRect("STATUS_DOT", x + w - 50, y + 10, 10, 10, CLR_NEON_GREEN);
+      CreateLabel("STATUS_TXT", "LIVE", x + w - 38, y + 8, CLR_NEON_GREEN, 8);
 
-      CreateLabel("SCN_H1", "PAIR", x + 10, y + 5, CLR_TEXT_DIM, 8, "Consolas Bold");
-      CreateLabel("SCN_H2", "TF", x + colW[0], y + 5, CLR_TEXT_DIM, 8, "Consolas Bold");
-      CreateLabel("SCN_H3", "Z-SCORE", x + colW[0] + colW[1], y + 5, CLR_TEXT_DIM, 8, "Consolas Bold");
-      CreateLabel("SCN_H4", "R²", x + colW[0] + colW[1] + colW[2], y + 5, CLR_TEXT_DIM, 8, "Consolas Bold");
-      CreateLabel("SCN_H5", "SIGNAL", x + colW[0] + colW[1] + colW[2] + colW[3], y + 5, CLR_TEXT_DIM, 8, "Consolas Bold");
+      CreateButton("BTN_MIN", "-", x + w - 28, y + 5, 22, 20, CLR_BG_PANEL, CLR_TEXT_BRIGHT, 12);
+   }
+
+   //+------------------------------------------------------------------+
+   //| DRAW: TOP PANEL - Scanner                                         |
+   //+------------------------------------------------------------------+
+   void DrawTopPanel(int x, int y) {
+      int w = SCANNER_WIDTH;
+      int h = TOP_PANEL_HEIGHT - 40;
+
+      // Panel background
+      CreateRect("TOP_BG", x, y, w, h, CLR_BG_PANEL, CLR_BORDER);
+
+      // Section header
+      CreateRect("TOP_HDR", x, y, w, 24, CLR_BG_HEADER, CLR_BORDER);
+      CreateLabel("TOP_TITLE", "▼ PAIRS SCANNER", x + 10, y + 5, CLR_NEON_CYAN, 9, "Consolas Bold");
+      CreateLabel("TOP_COUNT", IntegerToString(m_resultCount) + " pairs", x + w - 70, y + 6, CLR_TEXT_DIM, 8);
+
+      // Column headers
+      int headerY = y + 28;
+      CreateRect("SCN_HDR", x, headerY, w, 20, CLR_BG_MAIN, CLR_BORDER);
+
+      int cols[] = {8, 150, 195, 260, 315, 380, 480};
+      CreateLabel("H_COINT", "●", x + cols[0], headerY + 3, CLR_TEXT_DIM, 8);
+      CreateLabel("H_PAIR", "PAIR", x + cols[1] - 130, headerY + 3, CLR_TEXT_DIM, 8, "Consolas Bold");
+      CreateLabel("H_TF", "TF", x + cols[2] - 130, headerY + 3, CLR_TEXT_DIM, 8, "Consolas Bold");
+      CreateLabel("H_ZSCORE", "Z-SCORE", x + cols[3] - 130, headerY + 3, CLR_TEXT_DIM, 8, "Consolas Bold");
+      CreateLabel("H_R2", "R²", x + cols[4] - 130, headerY + 3, CLR_TEXT_DIM, 8, "Consolas Bold");
+      CreateLabel("H_HALF", "HL", x + cols[5] - 130, headerY + 3, CLR_TEXT_DIM, 8, "Consolas Bold");
+      CreateLabel("H_SIGNAL", "SIGNAL", x + cols[6] - 130, headerY + 3, CLR_TEXT_DIM, 8, "Consolas Bold");
+
+      // Draw rows
+      int rowY = headerY + 22;
+      int displayRows = MathMin(SCANNER_MAX_ROWS, m_resultCount - m_scrollOffset);
+
+      for(int i = 0; i < displayRows; i++) {
+         int idx = i + m_scrollOffset;
+         if(idx >= m_resultCount) break;
+
+         bool isSelected = (idx == m_selectedRow);
+         DrawScannerRow(i, x, rowY + i * SCANNER_ROW_HEIGHT, m_scanResults[idx], isSelected, cols);
+      }
+
+      // Signal summary at bottom
+      int summaryY = y + h - 22;
+      CreateRect("SUMMARY_BG", x, summaryY, w, 22, CLR_BG_HEADER, CLR_BORDER);
+
+      int strongSignals = 0, cointegrated = 0;
+      for(int i = 0; i < m_resultCount; i++) {
+         if(MathAbs(m_scanResults[i].signal) == 2) strongSignals++;
+         if(m_scanResults[i].isCointegrated) cointegrated++;
+      }
+
+      CreateLabel("SUM_SIG", "Strong Signals: " + IntegerToString(strongSignals), x + 10, summaryY + 4, CLR_NEON_GREEN, 8);
+      CreateLabel("SUM_COINT", "Cointegrated: " + IntegerToString(cointegrated), x + 150, summaryY + 4, CLR_NEON_CYAN, 8);
+      CreateLabel("SUM_TIME", TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES), x + w - 120, summaryY + 4, CLR_TEXT_DIM, 8);
    }
 
    //+------------------------------------------------------------------+
    //| Draw Scanner Row                                                  |
    //+------------------------------------------------------------------+
-   void DrawScannerRow(int index, int x, int y, SPairResult &result, bool isSelected) {
-      int colW[] = {140, 50, 70, 70, 80};
+   void DrawScannerRow(int index, int baseX, int y, SPairResult &result, bool isSelected, int &cols[]) {
       int rowH = SCANNER_ROW_HEIGHT;
       string rowName = "ROW_" + IntegerToString(index);
 
       // Background
       color bgColor = isSelected ? CLR_BG_HOVER : (index % 2 == 0) ? CLR_BG_ROW : CLR_BG_ROW_ALT;
-      CreateRect(rowName + "_BG", x, y, SCANNER_WIDTH, rowH, bgColor, CLR_BG_MAIN);
+      CreateRect(rowName + "_BG", baseX, y, SCANNER_WIDTH, rowH, bgColor, CLR_BG_MAIN);
 
-      // Cointegration indicator dot
+      // Cointegration dot
       color dotColor = result.isCointegrated ? CLR_NEON_GREEN : CLR_NEON_RED;
-      CreateRect(rowName + "_DOT", x + 3, y + 6, 6, 8, dotColor);
+      CreateRect(rowName + "_DOT", baseX + cols[0], y + 5, 8, 8, dotColor);
 
       // Pair name
-      CreateLabel(rowName + "_PAIR", result.pairName, x + 12, y + 3, CLR_TEXT_BRIGHT, 8);
+      color pairColor = isSelected ? CLR_NEON_CYAN : CLR_TEXT_BRIGHT;
+      CreateLabel(rowName + "_PAIR", result.pairName, baseX + cols[1] - 130, y + 2, pairColor, 8);
 
       // Timeframe
-      string tfName = "";
-      switch(result.timeframe) {
-         case PERIOD_M15: tfName = "M15"; break;
-         case PERIOD_H1:  tfName = "H1"; break;
-         case PERIOD_H4:  tfName = "H4"; break;
-         case PERIOD_D1:  tfName = "D1"; break;
-         default: tfName = "??";
-      }
-      CreateLabel(rowName + "_TF", tfName, x + colW[0], y + 3, CLR_TEXT_DIM, 8);
+      string tfName = "H4";
+      if(result.timeframe == PERIOD_D1) tfName = "D1";
+      else if(result.timeframe == PERIOD_H1) tfName = "H1";
+      CreateLabel(rowName + "_TF", tfName, baseX + cols[2] - 130, y + 2, CLR_TEXT_DIM, 8);
 
-      // Z-Score with color
-      string zText = DoubleToString(result.zScore, 2);
+      // Z-Score
       color zColor = GetZScoreColor(result.zScore);
-      CreateLabel(rowName + "_Z", zText, x + colW[0] + colW[1], y + 3, zColor, 8, "Consolas Bold");
+      string zPrefix = result.zScore > 0 ? "+" : "";
+      CreateLabel(rowName + "_Z", zPrefix + DoubleToString(result.zScore, 2), baseX + cols[3] - 130, y + 2, zColor, 8, "Consolas Bold");
 
-      // R² value
-      string r2Text = DoubleToString(result.rSquared * 100, 0) + "%";
+      // R²
       color r2Color = result.rSquared >= 0.7 ? CLR_NEON_CYAN : CLR_TEXT_DIM;
-      CreateLabel(rowName + "_R2", r2Text, x + colW[0] + colW[1] + colW[2], y + 3, r2Color, 8);
+      CreateLabel(rowName + "_R2", DoubleToString(result.rSquared * 100, 0) + "%", baseX + cols[4] - 130, y + 2, r2Color, 8);
+
+      // Half-life
+      string hlText = result.halfLife < 100 ? DoubleToString(result.halfLife, 1) : "99+";
+      color hlColor = result.halfLife < 20 ? CLR_NEON_GREEN : (result.halfLife < 50 ? CLR_NEON_YELLOW : CLR_TEXT_DIM);
+      CreateLabel(rowName + "_HL", hlText, baseX + cols[5] - 130, y + 2, hlColor, 8);
 
       // Signal
       color sigColor = CLR_TEXT_DIM;
-      if(result.signal == 2 || result.signal == -2) {
-         sigColor = (result.signal > 0) ? CLR_NEON_GREEN : CLR_NEON_RED;
-      } else if(result.signal == 1 || result.signal == -1) {
-         sigColor = CLR_NEON_YELLOW;
+      if(MathAbs(result.signal) == 2) sigColor = (result.signal > 0) ? CLR_NEON_GREEN : CLR_NEON_RED;
+      else if(MathAbs(result.signal) == 1) sigColor = CLR_NEON_YELLOW;
+      CreateLabel(rowName + "_SIG", result.signalText, baseX + cols[6] - 130, y + 2, sigColor, 7);
+   }
+
+   //+------------------------------------------------------------------+
+   //| DRAW: RIGHT PANEL - Analytics                                     |
+   //+------------------------------------------------------------------+
+   void DrawRightPanel(int x, int y, SPairResult &result) {
+      int w = RIGHT_PANEL_WIDTH - 10;
+      int h = MAIN_HEIGHT - 40;
+
+      // Panel background
+      CreateRect("RIGHT_BG", x, y, w, h, CLR_BG_PANEL, CLR_BORDER);
+
+      // === Z-SCORE GAUGE ===
+      int gaugeY = y + 5;
+      DrawZScoreGauge(x + 5, gaugeY, w - 10, 160, result.zScore);
+
+      // === SIGNAL STRENGTH ===
+      int strengthY = gaugeY + 170;
+      DrawSignalStrength(x + 5, strengthY, w - 10, result);
+
+      // === REGIME DETECTOR ===
+      int regimeY = strengthY + 95;
+      DrawRegimePanel(x + 5, regimeY, w - 10, result);
+
+      // === RISK METRICS ===
+      int metricsY = regimeY + 85;
+      DrawRiskMetrics(x + 5, metricsY, w - 10, result);
+
+      // === POSITION INFO ===
+      int posY = metricsY + 120;
+      DrawPositionInfo(x + 5, posY, w - 10);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Draw Z-Score Gauge                                                |
+   //+------------------------------------------------------------------+
+   void DrawZScoreGauge(int x, int y, int w, int h, double zScore) {
+      CreateRect("ZGAUGE_BG", x, y, w, h, CLR_BG_MAIN, CLR_BORDER_ACCENT);
+      CreateLabel("ZGAUGE_TITLE", "Z-SCORE METER", x + 10, y + 8, CLR_NEON_CYAN, 9, "Consolas Bold");
+
+      // Gauge area
+      int gaugeX = x + 40;
+      int gaugeY = y + 35;
+      int gaugeW = 50;
+      int gaugeH = 100;
+
+      CreateRect("ZGAUGE_FRAME", gaugeX, gaugeY, gaugeW, gaugeH, CLR_BG_CHART, CLR_BORDER);
+
+      // Level markers
+      double maxZ = 3.5, minZ = -3.5, range = maxZ - minZ;
+
+      // Draw zone backgrounds
+      int zoneTop = gaugeY;
+      int zone2Up = gaugeY + gaugeH - (int)((2.0 - minZ) / range * gaugeH);
+      int zone0 = gaugeY + gaugeH - (int)((0 - minZ) / range * gaugeH);
+      int zone2Dn = gaugeY + gaugeH - (int)((-2.0 - minZ) / range * gaugeH);
+      int zoneBot = gaugeY + gaugeH;
+
+      // Stop zone (top)
+      CreateRect("ZZONE_STOP_UP", gaugeX, zoneTop, gaugeW, zone2Up - zoneTop, C'60,20,20');
+      // Short zone
+      CreateRect("ZZONE_SHORT", gaugeX, zone2Up, gaugeW, zone0 - zone2Up, C'40,25,20');
+      // Long zone
+      CreateRect("ZZONE_LONG", gaugeX, zone0, gaugeW, zone2Dn - zone0, C'20,40,25');
+      // Stop zone (bottom)
+      CreateRect("ZZONE_STOP_DN", gaugeX, zone2Dn, gaugeW, zoneBot - zone2Dn, C'20,60,20');
+
+      // Level lines and labels
+      int lblX = gaugeX + gaugeW + 8;
+      CreateRect("ZLVL_P35", gaugeX, zoneTop, gaugeW, 1, CLR_NEON_RED);
+      CreateLabel("ZLBL_P35", "+3.5 SL", lblX, zoneTop - 4, CLR_NEON_RED, 7);
+
+      CreateRect("ZLVL_P2", gaugeX, zone2Up, gaugeW, 2, CLR_NEON_ORANGE);
+      CreateLabel("ZLBL_P2", "+2.0 SHORT", lblX, zone2Up - 4, CLR_NEON_ORANGE, 7);
+
+      CreateRect("ZLVL_0", gaugeX, zone0, gaugeW, 1, CLR_TEXT_DIM);
+      CreateLabel("ZLBL_0", "0 EXIT", lblX, zone0 - 4, CLR_TEXT_DIM, 7);
+
+      CreateRect("ZLVL_M2", gaugeX, zone2Dn, gaugeW, 2, CLR_NEON_CYAN);
+      CreateLabel("ZLBL_M2", "-2.0 LONG", lblX, zone2Dn - 4, CLR_NEON_CYAN, 7);
+
+      CreateRect("ZLVL_M35", gaugeX, zoneBot - 1, gaugeW, 1, CLR_NEON_GREEN);
+      CreateLabel("ZLBL_M35", "-3.5 SL", lblX, zoneBot - 5, CLR_NEON_GREEN, 7);
+
+      // Current Z indicator
+      double clampedZ = MathMax(minZ, MathMin(maxZ, zScore));
+      int zPosY = gaugeY + gaugeH - (int)((clampedZ - minZ) / range * gaugeH);
+      color zColor = GetZScoreColor(zScore);
+
+      CreateRect("ZCURRENT", gaugeX - 5, zPosY - 3, gaugeW + 10, 6, zColor);
+      CreateLabel("ZCURRENT_LBL", "►", gaugeX - 15, zPosY - 6, zColor, 10);
+
+      // Large value display
+      string zText = (zScore > 0 ? "+" : "") + DoubleToString(zScore, 2);
+      CreateLabel("ZVALUE", zText, x + w - 80, y + h - 30, zColor, 18, "Consolas Bold");
+   }
+
+   //+------------------------------------------------------------------+
+   //| Draw Signal Strength                                              |
+   //+------------------------------------------------------------------+
+   void DrawSignalStrength(int x, int y, int w, SPairResult &result) {
+      int h = 85;
+      CreateRect("STRENGTH_BG", x, y, w, h, CLR_BG_MAIN, CLR_BORDER_ACCENT);
+      CreateLabel("STRENGTH_TITLE", "SIGNAL STRENGTH", x + 10, y + 8, CLR_NEON_YELLOW, 9, "Consolas Bold");
+
+      double strength = CalcSignalStrength(result);
+      m_signalStrength = strength;
+
+      // Progress bar background
+      int barX = x + 15;
+      int barY = y + 35;
+      int barW = w - 30;
+      int barH = 20;
+
+      CreateRect("STRENGTH_BAR_BG", barX, barY, barW, barH, CLR_BG_CHART, CLR_BORDER);
+
+      // Progress bar fill
+      int fillW = (int)(barW * strength / 100);
+      color fillColor = CLR_NEON_RED;
+      if(strength >= 70) fillColor = CLR_NEON_GREEN;
+      else if(strength >= 50) fillColor = CLR_NEON_YELLOW;
+      else if(strength >= 30) fillColor = CLR_NEON_ORANGE;
+
+      if(fillW > 0) {
+         CreateRect("STRENGTH_BAR_FILL", barX, barY, fillW, barH, fillColor);
       }
-      CreateLabel(rowName + "_SIG", result.signalText, x + colW[0] + colW[1] + colW[2] + colW[3], y + 3, sigColor, 7);
+
+      // Percentage text
+      CreateLabel("STRENGTH_PCT", DoubleToString(strength, 0) + "%", barX + barW / 2 - 15, barY + 3, CLR_TEXT_BRIGHT, 10, "Consolas Bold");
+
+      // Confidence label
+      string confText = "LOW";
+      if(strength >= 70) confText = "HIGH";
+      else if(strength >= 50) confText = "MEDIUM";
+
+      CreateLabel("STRENGTH_CONF", "Confidence: " + confText, x + 15, y + 62, fillColor, 8);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Draw Regime Panel                                                 |
+   //+------------------------------------------------------------------+
+   void DrawRegimePanel(int x, int y, int w, SPairResult &result) {
+      int h = 75;
+      CreateRect("REGIME_BG", x, y, w, h, CLR_BG_MAIN, CLR_BORDER_ACCENT);
+      CreateLabel("REGIME_TITLE", "MARKET REGIME", x + 10, y + 8, CLR_NEON_MAGENTA, 9, "Consolas Bold");
+
+      ENUM_REGIME regime = DetectRegime(result);
+      m_currentRegime = regime;
+
+      string regimeName = GetRegimeName(regime);
+      color regimeColor = GetRegimeColor(regime);
+
+      // Regime indicator
+      CreateRect("REGIME_IND", x + 15, y + 35, 15, 15, regimeColor);
+      CreateLabel("REGIME_NAME", regimeName, x + 40, y + 36, regimeColor, 10, "Consolas Bold");
+
+      // Recommendation
+      string recText = "";
+      if(regime == REGIME_MEAN_REVERT) recText = "✓ Ideal for pairs trading";
+      else if(regime == REGIME_TRENDING) recText = "✗ Avoid - trending market";
+      else if(regime == REGIME_VOLATILE) recText = "! Caution - high volatility";
+      else recText = "○ Wait for clearer regime";
+
+      color recColor = (regime == REGIME_MEAN_REVERT) ? CLR_NEON_GREEN : CLR_TEXT_DIM;
+      CreateLabel("REGIME_REC", recText, x + 15, y + 55, recColor, 7);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Draw Risk Metrics                                                 |
+   //+------------------------------------------------------------------+
+   void DrawRiskMetrics(int x, int y, int w, SPairResult &result) {
+      int h = 110;
+      CreateRect("METRICS_BG", x, y, w, h, CLR_BG_MAIN, CLR_BORDER_ACCENT);
+      CreateLabel("METRICS_TITLE", "RISK METRICS", x + 10, y + 8, CLR_NEON_CYAN, 9, "Consolas Bold");
+
+      int row = 0;
+      int rowH = 18;
+      int startY = y + 30;
+      int valX = x + 150;
+
+      // Half-Life
+      color hlColor = result.halfLife < 20 ? CLR_NEON_GREEN : (result.halfLife < 50 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("M_HL_LBL", "Half-Life:", x + 15, startY + row * rowH, CLR_TEXT_DIM, 8);
+      CreateLabel("M_HL_VAL", DoubleToString(result.halfLife, 1) + " bars", valX, startY + row * rowH, hlColor, 8, "Consolas Bold");
+      row++;
+
+      // Zero-Crossings
+      color zcColor = result.zeroCrossings >= 10 ? CLR_NEON_GREEN : CLR_NEON_YELLOW;
+      CreateLabel("M_ZC_LBL", "Zero-Crossings:", x + 15, startY + row * rowH, CLR_TEXT_DIM, 8);
+      CreateLabel("M_ZC_VAL", IntegerToString(result.zeroCrossings), valX, startY + row * rowH, zcColor, 8, "Consolas Bold");
+      row++;
+
+      // ADF Statistic
+      color adfColor = result.adfStatistic < -2.86 ? CLR_NEON_GREEN : CLR_NEON_RED;
+      CreateLabel("M_ADF_LBL", "ADF Statistic:", x + 15, startY + row * rowH, CLR_TEXT_DIM, 8);
+      CreateLabel("M_ADF_VAL", DoubleToString(result.adfStatistic, 2), valX, startY + row * rowH, adfColor, 8, "Consolas Bold");
+      row++;
+
+      // Hedge Ratio
+      CreateLabel("M_BETA_LBL", "Hedge Ratio (β):", x + 15, startY + row * rowH, CLR_TEXT_DIM, 8);
+      CreateLabel("M_BETA_VAL", DoubleToString(result.beta, 4), valX, startY + row * rowH, CLR_NEON_CYAN, 8, "Consolas Bold");
+   }
+
+   //+------------------------------------------------------------------+
+   //| Draw Position Info                                                |
+   //+------------------------------------------------------------------+
+   void DrawPositionInfo(int x, int y, int w) {
+      int h = 80;
+      CreateRect("POS_BG", x, y, w, h, CLR_BG_MAIN, CLR_BORDER_ACCENT);
+      CreateLabel("POS_TITLE", "ACTIVE POSITIONS", x + 10, y + 8, CLR_NEON_ORANGE, 9, "Consolas Bold");
+
+      CreateLabel("POS_COUNT_LBL", "Open Pairs:", x + 15, y + 32, CLR_TEXT_DIM, 8);
+      CreateLabel("POS_COUNT_VAL", "0", x + 150, y + 32, CLR_TEXT_BRIGHT, 8, "Consolas Bold");
+
+      CreateLabel("POS_PL_LBL", "Unrealized P&L:", x + 15, y + 50, CLR_TEXT_DIM, 8);
+      CreateLabel("POS_PL_VAL", "$0.00", x + 150, y + 50, CLR_NEON_GREEN, 8, "Consolas Bold");
+   }
+
+   //+------------------------------------------------------------------+
+   //| DRAW: BOTTOM PANEL - Charts & Controls                            |
+   //+------------------------------------------------------------------+
+   void DrawBottomPanel(int x, int y, SPairResult &result) {
+      int w = SCANNER_WIDTH;
+
+      // === SPREAD CHART ===
+      DrawSpreadChart(x, y, SPREAD_CHART_W, SPREAD_CHART_H, result);
+
+      // === CONTROL PANEL ===
+      int ctrlY = y + SPREAD_CHART_H + 5;
+      DrawControlPanel(x, ctrlY, w);
    }
 
    //+------------------------------------------------------------------+
    //| Draw Spread Chart                                                 |
    //+------------------------------------------------------------------+
-   void DrawSpreadChart(int x, int y, SPairResult &result) {
-      int w = CHART_WIDTH;
-      int h = CHART_HEIGHT;
-
-      // Panel background
+   void DrawSpreadChart(int x, int y, int w, int h, SPairResult &result) {
+      // Background
       CreateRect("SPREAD_BG", x, y, w, h, CLR_BG_PANEL, CLR_BORDER);
 
-      // Title
+      // Header
+      CreateRect("SPREAD_HDR", x, y, w, 25, CLR_BG_HEADER, CLR_BORDER);
       CreateLabel("SPREAD_TITLE", "SPREAD: " + result.pairName, x + 10, y + 5, CLR_TEXT_BRIGHT, 9, "Consolas Bold");
-      CreateLabel("SPREAD_BETA", "β=" + DoubleToString(result.beta, 4), x + w - 80, y + 5, CLR_NEON_CYAN, 8);
+      CreateLabel("SPREAD_BETA", "β=" + DoubleToString(result.beta, 4), x + 250, y + 6, CLR_NEON_CYAN, 8);
+      CreateLabel("SPREAD_TF", "H4", x + 350, y + 6, CLR_TEXT_DIM, 8);
 
       // Chart area
-      int chartX = x + 10;
+      int chartX = x + 50;
       int chartY = y + 30;
-      int chartW = w - 20;
-      int chartH = h - 50;
+      int chartW = w - 70;
+      int chartH = h - 55;
 
-      CreateRect("SPREAD_CHART", chartX, chartY, chartW, chartH, CLR_BG_MAIN, CLR_GRID);
+      CreateRect("SPREAD_CHART", chartX, chartY, chartW, chartH, CLR_BG_CHART, CLR_GRID);
 
-      // Draw Bollinger Bands and spread line if we have history
+      // Draw spread line
       if(m_historySize > 10) {
          DrawSpreadLineOnChart(chartX, chartY, chartW, chartH, result);
       }
 
-      // Current values
-      CreateLabel("SPREAD_VAL", "Spread: " + DoubleToString(result.currentSpread, 6),
-                  x + 10, y + h - 18, CLR_TEXT_DIM, 7);
-      CreateLabel("SPREAD_STD", "σ: " + DoubleToString(result.spreadStdDev, 6),
-                  x + 140, y + h - 18, CLR_TEXT_DIM, 7);
+      // Footer stats
+      int footY = y + h - 22;
+      CreateLabel("SPREAD_MEAN", "μ=" + DoubleToString(result.spreadMean, 6), x + 10, footY, CLR_TEXT_DIM, 7);
+      CreateLabel("SPREAD_STD", "σ=" + DoubleToString(result.spreadStdDev, 6), x + 140, footY, CLR_TEXT_DIM, 7);
+      CreateLabel("SPREAD_CUR", "Current=" + DoubleToString(result.currentSpread, 6), x + 280, footY, CLR_TEXT_BRIGHT, 7);
    }
 
    //+------------------------------------------------------------------+
-   //| Draw spread line on chart area                                    |
+   //| Draw spread line on chart                                         |
    //+------------------------------------------------------------------+
    void DrawSpreadLineOnChart(int chartX, int chartY, int chartW, int chartH, SPairResult &result) {
       if(m_historySize < 2) return;
 
-      // Find min/max for scaling
       double mean = result.spreadMean;
       double stdDev = result.spreadStdDev;
       double minVal = mean - 3 * stdDev;
@@ -273,31 +643,34 @@ private:
       double range = maxVal - minVal;
       if(range < 1e-10) range = 1;
 
-      // Draw Bollinger Bands
+      // Bollinger Bands
       int bbUpperY = chartY + chartH - (int)((mean + 2 * stdDev - minVal) / range * chartH);
       int bbMiddleY = chartY + chartH - (int)((mean - minVal) / range * chartH);
       int bbLowerY = chartY + chartH - (int)((mean - 2 * stdDev - minVal) / range * chartH);
 
-      // Clamp
       bbUpperY = MathMax(chartY, MathMin(chartY + chartH - 1, bbUpperY));
       bbMiddleY = MathMax(chartY, MathMin(chartY + chartH - 1, bbMiddleY));
       bbLowerY = MathMax(chartY, MathMin(chartY + chartH - 1, bbLowerY));
 
-      CreateRect("BB_UPPER", chartX, bbUpperY, chartW, 1, CLR_BB_UPPER);
-      CreateRect("BB_MIDDLE", chartX, bbMiddleY, chartW, 2, CLR_BB_MIDDLE);
-      CreateRect("BB_LOWER", chartX, bbLowerY, chartW, 1, CLR_BB_LOWER);
+      CreateRect("BB_UPPER", chartX, bbUpperY, chartW, 2, CLR_BB_UPPER);
+      CreateRect("BB_MIDDLE", chartX, bbMiddleY, chartW, 1, CLR_BB_MIDDLE);
+      CreateRect("BB_LOWER", chartX, bbLowerY, chartW, 2, CLR_BB_LOWER);
 
-      // Draw spread points
+      // Y-axis labels
+      int lblX = chartX - 45;
+      CreateLabel("BB_LBL_U", "+2σ SELL", lblX, bbUpperY - 5, CLR_BB_UPPER, 7);
+      CreateLabel("BB_LBL_M", "μ EXIT", lblX, bbMiddleY - 5, CLR_BB_MIDDLE, 7);
+      CreateLabel("BB_LBL_L", "-2σ BUY", lblX, bbLowerY - 5, CLR_BB_LOWER, 7);
+
+      // Spread points
       int pointW = MathMax(2, chartW / m_historySize);
       int displayPoints = MathMin(m_historySize, chartW / pointW);
 
       for(int i = 0; i < displayPoints; i++) {
-         int idx = i;
-         if(idx >= m_historySize) continue;
+         if(i >= m_historySize) continue;
 
          int pointX = chartX + chartW - (i + 1) * pointW;
-         int pointY = chartY + chartH - (int)((m_spreadHistory[idx] - minVal) / range * chartH);
-
+         int pointY = chartY + chartH - (int)((m_spreadHistory[i] - minVal) / range * chartH);
          pointY = MathMax(chartY, MathMin(chartY + chartH - 2, pointY));
 
          string pointName = m_prefix + "SPT_" + IntegerToString(i);
@@ -308,119 +681,43 @@ private:
          ObjectSetInteger(0, pointName, OBJPROP_XDISTANCE, pointX);
          ObjectSetInteger(0, pointName, OBJPROP_YDISTANCE, pointY);
          ObjectSetInteger(0, pointName, OBJPROP_XSIZE, MathMax(2, pointW - 1));
-         ObjectSetInteger(0, pointName, OBJPROP_YSIZE, 2);
+         ObjectSetInteger(0, pointName, OBJPROP_YSIZE, 3);
          ObjectSetInteger(0, pointName, OBJPROP_BGCOLOR, CLR_SPREAD_LINE);
          ObjectSetInteger(0, pointName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
          ObjectSetInteger(0, pointName, OBJPROP_BORDER_COLOR, CLR_SPREAD_LINE);
          ObjectSetInteger(0, pointName, OBJPROP_SELECTABLE, false);
          ObjectSetInteger(0, pointName, OBJPROP_HIDDEN, true);
       }
-
-      // Labels
-      CreateLabel("BB_LBL_U", "+2σ", chartX + chartW + 5, bbUpperY - 5, CLR_BB_UPPER, 7);
-      CreateLabel("BB_LBL_M", "μ", chartX + chartW + 5, bbMiddleY - 5, CLR_BB_MIDDLE, 7);
-      CreateLabel("BB_LBL_L", "-2σ", chartX + chartW + 5, bbLowerY - 5, CLR_BB_LOWER, 7);
-   }
-
-   //+------------------------------------------------------------------+
-   //| Draw Z-Score Histogram                                            |
-   //+------------------------------------------------------------------+
-   void DrawZScoreHistogram(int x, int y, double currentZ) {
-      int w = ZSCORE_WIDTH;
-      int h = ZSCORE_HEIGHT;
-
-      // Panel background
-      CreateRect("ZSCORE_BG", x, y, w, h, CLR_BG_PANEL, CLR_BORDER);
-
-      // Title
-      CreateLabel("ZSCORE_TITLE", "Z-SCORE", x + 10, y + 5, CLR_TEXT_BRIGHT, 9, "Consolas Bold");
-
-      // Chart area
-      int chartX = x + 30;
-      int chartY = y + 30;
-      int chartW = w - 45;
-      int chartH = h - 50;
-
-      CreateRect("ZSCORE_CHART", chartX, chartY, chartW, chartH, CLR_BG_MAIN, CLR_GRID);
-
-      // Draw level lines
-      // Scale: -3.5 to +3.5
-      double maxZ = 3.5;
-      double minZ = -3.5;
-      double range = maxZ - minZ;
-
-      // Level positions
-      int y0 = chartY + chartH - (int)((0 - minZ) / range * chartH);
-      int yP2 = chartY + chartH - (int)((2.0 - minZ) / range * chartH);
-      int yM2 = chartY + chartH - (int)((-2.0 - minZ) / range * chartH);
-      int yP35 = chartY + chartH - (int)((3.5 - minZ) / range * chartH);
-      int yM35 = chartY + chartH - (int)((-3.5 - minZ) / range * chartH);
-
-      // Draw level lines
-      CreateRect("ZLVL_0", chartX, y0, chartW, 1, CLR_TEXT_DIM);
-      CreateRect("ZLVL_P2", chartX, yP2, chartW, 1, CLR_NEON_RED);
-      CreateRect("ZLVL_M2", chartX, yM2, chartW, 1, CLR_NEON_GREEN);
-
-      // Draw Z-Score bar
-      currentZ = MathMax(minZ, MathMin(maxZ, currentZ));
-      int barTop, barBottom;
-
-      if(currentZ >= 0) {
-         barTop = chartY + chartH - (int)((currentZ - minZ) / range * chartH);
-         barBottom = y0;
-      } else {
-         barTop = y0;
-         barBottom = chartY + chartH - (int)((currentZ - minZ) / range * chartH);
-      }
-
-      int barH = MathAbs(barBottom - barTop);
-      color barColor = GetZScoreColor(currentZ);
-
-      CreateRect("ZSCORE_BAR", chartX + 10, MathMin(barTop, barBottom), chartW - 20, barH, barColor);
-
-      // Labels
-      CreateLabel("ZLBL_P35", "+3.5", x + 5, yP35 - 5, CLR_TEXT_MUTED, 7);
-      CreateLabel("ZLBL_P2", "+2.0", x + 5, yP2 - 5, CLR_NEON_RED, 7);
-      CreateLabel("ZLBL_0", "0", x + 5, y0 - 5, CLR_TEXT_DIM, 7);
-      CreateLabel("ZLBL_M2", "-2.0", x + 5, yM2 - 5, CLR_NEON_GREEN, 7);
-      CreateLabel("ZLBL_M35", "-3.5", x + 5, yM35 - 5, CLR_TEXT_MUTED, 7);
-
-      // Current value
-      CreateLabel("ZSCORE_VAL", DoubleToString(currentZ, 2), x + 10, y + h - 18, barColor, 12, "Consolas Bold");
    }
 
    //+------------------------------------------------------------------+
    //| Draw Control Panel                                                |
    //+------------------------------------------------------------------+
-   void DrawControlPanel(int x, int y, int totalWidth) {
+   void DrawControlPanel(int x, int y, int w) {
       int h = CONTROL_HEIGHT;
 
-      // Background
-      CreateRect("CTRL_BG", x, y, totalWidth, h, CLR_BG_PANEL, CLR_BORDER);
+      CreateRect("CTRL_BG", x, y, w, h, CLR_BG_PANEL, CLR_BORDER);
+      CreateRect("CTRL_HDR", x, y, w, 22, CLR_BG_HEADER, CLR_BORDER);
+      CreateLabel("CTRL_TITLE", "▼ TRADE EXECUTION", x + 10, y + 4, CLR_NEON_CYAN, 8, "Consolas Bold");
 
       // Buttons
-      int btnW = 100;
-      int btnH = 28;
-      int btnY = y + 10;
-      int spacing = 10;
+      int btnY = y + 28;
+      int btnH = 30;
 
-      CreateButton("BTN_SCAN", "SCAN MARKET", x + 10, btnY, btnW, btnH, C'20,80,40', CLR_NEON_GREEN, 8);
-      CreateButton("BTN_EXEC", "EXECUTE HEDGE", x + 10 + btnW + spacing, btnY, btnW + 10, btnH, C'20,60,100', CLR_NEON_CYAN, 8);
-      CreateButton("BTN_CLOSE", "CLOSE ALL", x + 10 + 2*(btnW + spacing) + 10, btnY, btnW - 10, btnH, C'100,30,30', CLR_NEON_RED, 8);
+      CreateButton("BTN_SCAN", "SCAN MARKET", x + 10, btnY, 120, btnH, C'15,60,30', CLR_NEON_GREEN, 9);
+      CreateButton("BTN_EXEC", "EXECUTE HEDGE", x + 140, btnY, 130, btnH, C'15,40,80', CLR_NEON_CYAN, 9);
+      CreateButton("BTN_CLOSE", "CLOSE ALL", x + 280, btnY, 100, btnH, C'80,25,25', CLR_NEON_RED, 9);
 
-      // Status info
-      int infoX = x + 350;
-      CreateLabel("INFO_PL", "Unrealized P&L:", infoX, y + 10, CLR_TEXT_DIM, 8);
-      CreateLabel("INFO_PL_VAL", "$0.00", infoX + 100, y + 10, CLR_TEXT_BRIGHT, 8, "Consolas Bold");
+      // Risk info
+      int infoX = x + 400;
+      CreateLabel("CTRL_DD_LBL", "Max DD:", infoX, btnY + 2, CLR_TEXT_DIM, 8);
+      CreateLabel("CTRL_DD_VAL", "0.00%", infoX + 55, btnY + 2, CLR_TEXT_BRIGHT, 8, "Consolas Bold");
 
-      CreateLabel("INFO_POS", "Open Positions:", infoX, y + 28, CLR_TEXT_DIM, 8);
-      CreateLabel("INFO_POS_VAL", "0", infoX + 100, y + 28, CLR_TEXT_BRIGHT, 8, "Consolas Bold");
+      CreateLabel("CTRL_RISK_LBL", "Risk/Trade:", infoX, btnY + 18, CLR_TEXT_DIM, 8);
+      CreateLabel("CTRL_RISK_VAL", "1.0%", infoX + 70, btnY + 18, CLR_NEON_YELLOW, 8, "Consolas Bold");
 
-      CreateLabel("INFO_DD", "Max Drawdown:", infoX, y + 46, CLR_TEXT_DIM, 8);
-      CreateLabel("INFO_DD_VAL", "0.00%", infoX + 100, y + 46, CLR_TEXT_BRIGHT, 8, "Consolas Bold");
-
-      CreateLabel("INFO_BETA", "Active Beta:", infoX + 180, y + 10, CLR_TEXT_DIM, 8);
-      CreateLabel("INFO_BETA_VAL", "-", infoX + 270, y + 10, CLR_NEON_CYAN, 8, "Consolas Bold");
+      // Footer instructions
+      CreateLabel("CTRL_HELP", "Keys: Q=Toggle | R=Refresh | X=Close All", x + 10, y + h - 18, CLR_TEXT_MUTED, 7);
    }
 
    //+------------------------------------------------------------------+
@@ -431,11 +728,8 @@ private:
       for(int i = total - 1; i >= 0; i--) {
          string name = ObjectName(0, i, 0, -1);
          if(StringFind(name, m_prefix) != 0) continue;
-
-         // Keep main BG and title
-         if(StringFind(name, m_prefix + "MAIN_") == 0) continue;
+         if(StringFind(name, m_prefix + "TITLE") == 0 && StringFind(name, "TITLE_BG") < 0) continue;
          if(StringFind(name, m_prefix + "BTN_MIN") == 0) continue;
-
          ObjectDelete(0, name);
       }
    }
@@ -447,44 +741,30 @@ public:
    CDashboard() {
       m_prefix = "DL_QUANT_";
       m_startX = 10;
-      m_startY = 30;
+      m_startY = 25;
       m_isVisible = true;
       m_isMinimized = false;
       m_resultCount = 0;
       m_selectedRow = -1;
       m_scrollOffset = 0;
       m_historySize = 0;
+      m_signalStrength = 0;
+      m_estimatedSharpe = 0;
+      m_signalCount = 0;
+      m_winCount = 0;
+      m_currentRegime = REGIME_CONSOLIDATION;
    }
 
-   //+------------------------------------------------------------------+
-   //| Destructor                                                        |
-   //+------------------------------------------------------------------+
-   ~CDashboard() {
-      ObjectsDeleteAll(0, m_prefix);
-   }
+   ~CDashboard() { ObjectsDeleteAll(0, m_prefix); }
 
-   //+------------------------------------------------------------------+
-   //| Set Position                                                      |
-   //+------------------------------------------------------------------+
-   void SetPosition(int x, int y) {
-      m_startX = x;
-      m_startY = y;
-   }
+   void SetPosition(int x, int y) { m_startX = x; m_startY = y; }
 
-   //+------------------------------------------------------------------+
-   //| Update Results                                                    |
-   //+------------------------------------------------------------------+
    void UpdateResults(SPairResult &results[], int count) {
       m_resultCount = count;
       ArrayResize(m_scanResults, count);
-      for(int i = 0; i < count; i++) {
-         m_scanResults[i] = results[i];
-      }
+      for(int i = 0; i < count; i++) m_scanResults[i] = results[i];
    }
 
-   //+------------------------------------------------------------------+
-   //| Update Spread History                                             |
-   //+------------------------------------------------------------------+
    void UpdateSpreadHistory(double &spreadHist[], double &zHist[], int size) {
       m_historySize = size;
       ArrayResize(m_spreadHistory, size);
@@ -496,7 +776,7 @@ public:
    }
 
    //+------------------------------------------------------------------+
-   //| Draw Full Dashboard                                               |
+   //| Draw Full Dashboard - 3 Panel Layout                              |
    //+------------------------------------------------------------------+
    void Draw() {
       if(!m_isVisible) return;
@@ -504,49 +784,22 @@ public:
       int x = m_startX;
       int y = m_startY;
 
-      int totalWidth = SCANNER_WIDTH + CHART_WIDTH + ZSCORE_WIDTH + 30;
-      int scannerHeight = 28 + SCANNER_MAX_ROWS * SCANNER_ROW_HEIGHT;
-      int totalHeight = scannerHeight + CHART_HEIGHT + CONTROL_HEIGHT + 40;
-
       if(m_isMinimized) {
          DeleteAllContent();
-         CreateRect("MAIN_BG", x, y, totalWidth, 28, CLR_BG_MAIN, CLR_NEON_CYAN);
-         CreateLabel("MAIN_TITLE", "D-LOGIC QUANT DASHBOARD v4.00", x + 10, y + 6, CLR_TEXT_BRIGHT, 10, "Consolas Bold");
-         CreateButton("BTN_MIN", "+", x + totalWidth - 28, y + 4, 22, 20, CLR_BG_PANEL, CLR_TEXT_BRIGHT, 10);
+         CreateRect("TITLE_BG", x, y, MAIN_WIDTH, 30, CLR_BG_MAIN, CLR_NEON_CYAN);
+         CreateLabel("TITLE", "D-LOGIC QUANT DASHBOARD v4.00 [MINIMIZED]", x + 12, y + 7, CLR_TEXT_BRIGHT, 10, "Consolas Bold");
+         CreateButton("BTN_MIN", "+", x + MAIN_WIDTH - 28, y + 5, 22, 20, CLR_BG_PANEL, CLR_TEXT_BRIGHT, 12);
          ChartRedraw(0);
          return;
       }
 
       // Main background
-      CreateRect("MAIN_BG", x, y, totalWidth, totalHeight, CLR_BG_MAIN, CLR_NEON_CYAN);
+      CreateRect("MAIN_BG", x, y, MAIN_WIDTH, MAIN_HEIGHT, CLR_BG_MAIN, CLR_NEON_CYAN);
 
       // Title bar
-      CreateRect("MAIN_HEADER", x, y, totalWidth, 28, CLR_BG_HEADER, CLR_BORDER);
-      CreateLabel("MAIN_TITLE", "D-LOGIC QUANT DASHBOARD v4.00", x + 10, y + 6, CLR_TEXT_BRIGHT, 10, "Consolas Bold");
-      CreateLabel("MAIN_SUBTITLE", "Statistical Arbitrage Engine", x + 300, y + 8, CLR_NEON_CYAN, 8);
-      CreateButton("BTN_MIN", "-", x + totalWidth - 28, y + 4, 22, 20, CLR_BG_PANEL, CLR_TEXT_BRIGHT, 10);
+      DrawTitleBar(x, y, MAIN_WIDTH);
 
-      // Scanner section
-      int scannerY = y + 32;
-      CreateLabel("SEC_SCANNER", "▼ PAIRS SCANNER", x + 5, scannerY, CLR_NEON_CYAN, 8, "Consolas Bold");
-      DrawScannerHeader(x + 5, scannerY + 18);
-
-      // Draw rows
-      int rowY = scannerY + 42;
-      int displayRows = MathMin(SCANNER_MAX_ROWS, m_resultCount - m_scrollOffset);
-
-      for(int i = 0; i < displayRows; i++) {
-         int idx = i + m_scrollOffset;
-         if(idx >= m_resultCount) break;
-
-         bool isSelected = (idx == m_selectedRow);
-         DrawScannerRow(i, x + 5, rowY + i * SCANNER_ROW_HEIGHT, m_scanResults[idx], isSelected);
-      }
-
-      // Middle section - Charts
-      int chartY = scannerY + scannerHeight - 20;
-
-      // Selected pair info or default
+      // Get selected pair data
       SPairResult displayResult;
       if(m_selectedRow >= 0 && m_selectedRow < m_resultCount) {
          displayResult = m_scanResults[m_selectedRow];
@@ -559,17 +812,23 @@ public:
          displayResult.spreadMean = 0;
          displayResult.spreadStdDev = 0;
          displayResult.currentSpread = 0;
+         displayResult.isCointegrated = false;
+         displayResult.rSquared = 0;
+         displayResult.halfLife = 0;
+         displayResult.zeroCrossings = 0;
+         displayResult.adfStatistic = 0;
+         displayResult.signal = 0;
+         displayResult.signalText = "NO DATA";
       }
 
-      // Spread chart
-      DrawSpreadChart(x + 5, chartY, displayResult);
+      // TOP PANEL - Scanner
+      DrawTopPanel(x + 5, y + 35);
 
-      // Z-Score histogram
-      DrawZScoreHistogram(x + CHART_WIDTH + 15, chartY, displayResult.zScore);
+      // RIGHT PANEL - Analytics
+      DrawRightPanel(x + RIGHT_PANEL_X, y + 35, displayResult);
 
-      // Control panel
-      int controlY = chartY + CHART_HEIGHT + 10;
-      DrawControlPanel(x + 5, controlY, totalWidth - 10);
+      // BOTTOM PANEL - Charts & Controls
+      DrawBottomPanel(x + 5, y + BOTTOM_PANEL_Y, displayResult);
 
       ChartRedraw(0);
    }
@@ -579,21 +838,18 @@ public:
    //+------------------------------------------------------------------+
    void UpdateInfo(double unrealizedPL, int positions, double drawdown, double activeBeta) {
       color plColor = unrealizedPL >= 0 ? CLR_NEON_GREEN : CLR_NEON_RED;
-
       string plText = (unrealizedPL >= 0 ? "+" : "") + DoubleToString(unrealizedPL, 2);
-      ObjectSetString(0, m_prefix + "INFO_PL_VAL", OBJPROP_TEXT, "$" + plText);
-      ObjectSetInteger(0, m_prefix + "INFO_PL_VAL", OBJPROP_COLOR, plColor);
 
-      ObjectSetString(0, m_prefix + "INFO_POS_VAL", OBJPROP_TEXT, IntegerToString(positions));
-      ObjectSetString(0, m_prefix + "INFO_DD_VAL", OBJPROP_TEXT, DoubleToString(drawdown, 2) + "%");
-      ObjectSetString(0, m_prefix + "INFO_BETA_VAL", OBJPROP_TEXT, activeBeta != 0 ? DoubleToString(activeBeta, 4) : "-");
+      ObjectSetString(0, m_prefix + "POS_COUNT_VAL", OBJPROP_TEXT, IntegerToString(positions));
+      ObjectSetString(0, m_prefix + "POS_PL_VAL", OBJPROP_TEXT, "$" + plText);
+      ObjectSetInteger(0, m_prefix + "POS_PL_VAL", OBJPROP_COLOR, plColor);
+      ObjectSetString(0, m_prefix + "CTRL_DD_VAL", OBJPROP_TEXT, DoubleToString(drawdown, 2) + "%");
    }
 
    //+------------------------------------------------------------------+
    //| Handle Click Events                                               |
    //+------------------------------------------------------------------+
    int HandleClick(string sparam, string &symbolA, string &symbolB, double &beta) {
-      // Minimize button
       if(sparam == m_prefix + "BTN_MIN") {
          m_isMinimized = !m_isMinimized;
          ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
@@ -601,41 +857,37 @@ public:
          return -1;
       }
 
-      // Scan button
       if(sparam == m_prefix + "BTN_SCAN") {
          ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
-         return 1;  // Request scan
+         return 1;
       }
 
-      // Execute button
       if(sparam == m_prefix + "BTN_EXEC") {
          ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
          if(m_selectedRow >= 0 && m_selectedRow < m_resultCount) {
             symbolA = m_scanResults[m_selectedRow].symbolA;
             symbolB = m_scanResults[m_selectedRow].symbolB;
             beta = m_scanResults[m_selectedRow].beta;
-            return 2;  // Request execute
+            return 2;
          }
          return 0;
       }
 
-      // Close all button
       if(sparam == m_prefix + "BTN_CLOSE") {
          ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
-         return 3;  // Request close all
+         return 3;
       }
 
       // Row selection
       for(int i = 0; i < SCANNER_MAX_ROWS; i++) {
-         string rowBgName = m_prefix + "ROW_" + IntegerToString(i) + "_BG";
-         if(sparam == rowBgName || StringFind(sparam, m_prefix + "ROW_" + IntegerToString(i)) == 0) {
+         if(StringFind(sparam, m_prefix + "ROW_" + IntegerToString(i)) == 0) {
             m_selectedRow = i + m_scrollOffset;
             if(m_selectedRow < m_resultCount) {
                symbolA = m_scanResults[m_selectedRow].symbolA;
                symbolB = m_scanResults[m_selectedRow].symbolB;
                beta = m_scanResults[m_selectedRow].beta;
                Draw();
-               return 4;  // Row selected
+               return 4;
             }
             return 0;
          }
@@ -644,24 +896,13 @@ public:
       return 0;
    }
 
-   //+------------------------------------------------------------------+
-   //| Toggle Visibility                                                 |
-   //+------------------------------------------------------------------+
    void ToggleVisibility() {
       m_isVisible = !m_isVisible;
-      if(!m_isVisible) {
-         ObjectsDeleteAll(0, m_prefix);
-      } else {
-         m_isMinimized = false;
-         Draw();
-      }
+      if(!m_isVisible) ObjectsDeleteAll(0, m_prefix);
+      else { m_isMinimized = false; Draw(); }
    }
 
-   //+------------------------------------------------------------------+
-   //| Sort Results by Z-Score (Absolute Value)                          |
-   //+------------------------------------------------------------------+
    void SortByZScore() {
-      // Simple bubble sort by absolute Z-Score (highest first)
       for(int i = 0; i < m_resultCount - 1; i++) {
          for(int j = 0; j < m_resultCount - i - 1; j++) {
             if(MathAbs(m_scanResults[j].zScore) < MathAbs(m_scanResults[j + 1].zScore)) {
@@ -673,12 +914,8 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Get Selected Pair                                                 |
-   //+------------------------------------------------------------------+
    bool GetSelectedPair(string &symbolA, string &symbolB, double &beta, double &zScore) {
       if(m_selectedRow < 0 || m_selectedRow >= m_resultCount) return false;
-
       symbolA = m_scanResults[m_selectedRow].symbolA;
       symbolB = m_scanResults[m_selectedRow].symbolB;
       beta = m_scanResults[m_selectedRow].beta;
@@ -688,6 +925,8 @@ public:
 
    bool IsVisible() { return m_isVisible; }
    int GetResultCount() { return m_resultCount; }
+   double GetSignalStrength() { return m_signalStrength; }
+   ENUM_REGIME GetCurrentRegime() { return m_currentRegime; }
 };
 
 //+------------------------------------------------------------------+
