@@ -12,7 +12,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Rafał Dembski"
 #property description "D-LOGIC Quant Dashboard - Statistical Arbitrage Engine"
-#property version   "4.00"
+#property version   "4.10"
 #property strict
 
 #include "DLogic_Engine.mqh"
@@ -49,6 +49,11 @@ input group "=== DISPLAY SETTINGS ==="
 input int      Inp_DashX = 10;                  // Dashboard X Position
 input int      Inp_DashY = 30;                  // Dashboard Y Position
 
+input group "=== ALERT SETTINGS ==="
+input bool     Inp_AlertsEnabled = true;        // Enable Alerts
+input double   Inp_AlertZThreshold = 2.0;       // Alert Z-Score Threshold
+input double   Inp_AlertStrength = 60;          // Alert Min Signal Strength (%)
+
 // ============================================================
 // PREDEFINED FOREX PAIRS FOR SCANNING
 // ============================================================
@@ -79,6 +84,8 @@ int              g_historySize;
 // Performance tracking
 double           g_maxDrawdown;
 double           g_peakEquity;
+int              g_lastTradeCount;      // Track position count for closure detection
+double           g_lastEquity;          // Track equity for P&L calculation
 
 //+------------------------------------------------------------------+
 //| Initialize symbols - validate availability                        |
@@ -264,6 +271,12 @@ void CheckSignals() {
       // Skip if already has position
       if(TradeManager.HasPosition(result.symbolA, result.symbolB)) continue;
 
+      // Record any meaningful signals (±1 or ±2)
+      if(result.signal != 0) {
+         Dashboard.RecordSignal(result.pairName, result.signal,
+                                result.zScore, Dashboard.GetSignalStrength());
+      }
+
       // Check for strong signals
       if(result.signal == 2) {
          // Long spread: BUY A, SELL B (Z < -2)
@@ -291,9 +304,12 @@ void CheckSignals() {
 //+------------------------------------------------------------------+
 int OnInit() {
    Print("=======================================================");
-   Print("  D-LOGIC QUANT DASHBOARD v4.00");
+   Print("  D-LOGIC QUANT DASHBOARD v4.10");
    Print("  Statistical Arbitrage Engine");
    Print("  Author: Rafał Dembski");
+   Print("-------------------------------------------------------");
+   Print("  Features: Performance Tracking, Signal History,");
+   Print("           Equity Curve, Alert System, Regime Detection");
    Print("=======================================================");
 
    // Initialize engine
@@ -308,11 +324,14 @@ int OnInit() {
    // Initialize dashboard
    Dashboard = new CDashboard();
    Dashboard.SetPosition(Inp_DashX, Inp_DashY);
+   Dashboard.ConfigureAlerts(Inp_AlertsEnabled, Inp_AlertZThreshold, Inp_AlertStrength);
 
    // Initialize tracking
    g_peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   g_lastEquity = g_peakEquity;
    g_maxDrawdown = 0;
    g_resultCount = 0;
+   g_lastTradeCount = 0;
 
    // Initial scan
    RunPairScan();
@@ -323,7 +342,7 @@ int OnInit() {
    }
 
    Print("[SYSTEM] Initialization complete");
-   Print("[SYSTEM] Keyboard: Q=Toggle Dashboard, R=Refresh Scan, X=Close All");
+   Print("[SYSTEM] Keyboard: Q=Toggle | R=Refresh | X=Close All | A=Toggle Alerts | S=Reset Stats");
 
    return INIT_SUCCEEDED;
 }
@@ -368,6 +387,20 @@ void OnTick() {
    // Update dashboard info
    double unrealizedPL = TradeManager.GetTotalUnrealizedPL();
    int positions = TradeManager.GetPositionCount();
+
+   // Check for closed positions and record results
+   if(positions < g_lastTradeCount) {
+      // Position was closed - calculate approximate P&L
+      double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+      double tradePL = currentEquity - g_lastEquity - unrealizedPL;
+
+      // Record result in dashboard for performance tracking
+      Dashboard.RecordTradeResult(tradePL);
+
+      Print("[TRADE] Position closed. P&L: ", DoubleToString(tradePL, 2));
+      g_lastEquity = currentEquity - unrealizedPL;  // Update base equity
+   }
+   g_lastTradeCount = positions;
 
    // Get active beta if position exists
    double activeBeta = 0;
@@ -463,6 +496,22 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
       if(lparam == 'X' || lparam == 'x') {
          Print("[UI] Emergency close all");
          TradeManager.CloseAllPositions("Emergency Close");
+      }
+
+      // A = Toggle alerts
+      if(lparam == 'A' || lparam == 'a') {
+         bool currentState = Dashboard.AreAlertsEnabled();
+         Dashboard.ConfigureAlerts(!currentState, Inp_AlertZThreshold, Inp_AlertStrength);
+         Print("[UI] Alerts ", !currentState ? "ENABLED" : "DISABLED");
+         Dashboard.Draw();
+      }
+
+      // S = Reset stats
+      if(lparam == 'S' || lparam == 's') {
+         Dashboard.ResetStats();
+         g_lastEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+         Print("[UI] Performance stats reset");
+         Dashboard.Draw();
       }
    }
 }
