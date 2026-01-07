@@ -37,6 +37,20 @@ struct SPairResult {
    double   halfLife;          // Estimated half-life of mean reversion
    bool     isCointegrated;    // Passes cointegration test?
 
+   // Advanced Analytics (NEW)
+   double   hurstExponent;     // Hurst Exponent: <0.5=mean reverting, >0.5=trending
+   double   volatilityRatio;   // Current vol / Historical vol (regime indicator)
+   double   kellyFraction;     // Optimal position size (Kelly Criterion)
+   double   expectedReturn;    // Expected return based on Z-Score mean reversion
+   int      qualityScore;      // Overall pair quality (0-100)
+
+   // Correlation & Stability Analytics
+   double   priceCorrelation;  // Pearson correlation between price series
+   double   varianceRatio;     // Lo-MacKinlay VR test (<1=mean revert, >1=trending)
+   double   autocorrelation;   // Lag-1 autocorrelation of spread
+   double   spreadStability;   // Stability index (0-100)
+   double   optimalEntryZ;     // Optimized entry Z-Score
+
    // Signal
    int      signal;            // -2=Strong Short, -1=Weak Short, 0=Neutral, 1=Weak Long, 2=Strong Long
    string   signalText;        // Human readable signal
@@ -299,6 +313,204 @@ private:
    }
 
    //+------------------------------------------------------------------+
+   //| Calculate Hurst Exponent (Rescaled Range Method)                   |
+   //| H < 0.5 = Mean Reverting (ideal for pairs trading)                |
+   //| H = 0.5 = Random Walk                                              |
+   //| H > 0.5 = Trending (avoid for pairs trading)                       |
+   //+------------------------------------------------------------------+
+   double CalculateHurstExponent(double &series[]) {
+      int size = ArraySize(series);
+      if(size < 20) return 0.5;  // Default to random walk
+
+      // Use multiple sub-periods for R/S calculation
+      int minPeriod = 10;
+      int maxPeriod = size / 2;
+
+      double logN[], logRS[];
+      int validPoints = 0;
+
+      // Calculate R/S for different period lengths
+      for(int n = minPeriod; n <= maxPeriod; n += 5) {
+         int numPeriods = size / n;
+         if(numPeriods < 1) continue;
+
+         double sumRS = 0;
+         int countRS = 0;
+
+         for(int p = 0; p < numPeriods; p++) {
+            int startIdx = p * n;
+            if(startIdx + n > size) break;
+
+            // Calculate mean of this sub-period
+            double subMean = 0;
+            for(int i = 0; i < n; i++) {
+               subMean += series[startIdx + i];
+            }
+            subMean /= n;
+
+            // Calculate cumulative deviation from mean
+            double cumDev = 0;
+            double minCumDev = 0;
+            double maxCumDev = 0;
+
+            for(int i = 0; i < n; i++) {
+               cumDev += (series[startIdx + i] - subMean);
+               if(cumDev < minCumDev) minCumDev = cumDev;
+               if(cumDev > maxCumDev) maxCumDev = cumDev;
+            }
+
+            double range = maxCumDev - minCumDev;
+
+            // Calculate standard deviation
+            double sumSq = 0;
+            for(int i = 0; i < n; i++) {
+               sumSq += MathPow(series[startIdx + i] - subMean, 2);
+            }
+            double stdDev = MathSqrt(sumSq / n);
+
+            if(stdDev > 1e-10) {
+               sumRS += range / stdDev;
+               countRS++;
+            }
+         }
+
+         if(countRS > 0) {
+            ArrayResize(logN, validPoints + 1);
+            ArrayResize(logRS, validPoints + 1);
+            logN[validPoints] = MathLog((double)n);
+            logRS[validPoints] = MathLog(sumRS / countRS);
+            validPoints++;
+         }
+      }
+
+      // Linear regression of log(R/S) on log(n) to get Hurst exponent
+      if(validPoints < 3) return 0.5;
+
+      double sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+      for(int i = 0; i < validPoints; i++) {
+         sumX += logN[i];
+         sumY += logRS[i];
+         sumXY += logN[i] * logRS[i];
+         sumX2 += logN[i] * logN[i];
+      }
+
+      double denom = validPoints * sumX2 - sumX * sumX;
+      if(MathAbs(denom) < 1e-10) return 0.5;
+
+      double hurst = (validPoints * sumXY - sumX * sumY) / denom;
+
+      // Clamp to reasonable range [0, 1]
+      return MathMax(0.0, MathMin(1.0, hurst));
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Volatility Ratio (Current / Historical)                  |
+   //| >1 = High volatility regime, <1 = Low volatility regime            |
+   //+------------------------------------------------------------------+
+   double CalculateVolatilityRatio(double &series[]) {
+      int size = ArraySize(series);
+      if(size < 50) return 1.0;
+
+      // Recent volatility (last 20 bars)
+      int recentPeriod = 20;
+      double recentSum = 0, recentSumSq = 0;
+      for(int i = 0; i < recentPeriod; i++) {
+         recentSum += series[i];
+      }
+      double recentMean = recentSum / recentPeriod;
+      for(int i = 0; i < recentPeriod; i++) {
+         recentSumSq += MathPow(series[i] - recentMean, 2);
+      }
+      double recentVol = MathSqrt(recentSumSq / recentPeriod);
+
+      // Historical volatility (full period)
+      double histSum = 0, histSumSq = 0;
+      for(int i = 0; i < size; i++) {
+         histSum += series[i];
+      }
+      double histMean = histSum / size;
+      for(int i = 0; i < size; i++) {
+         histSumSq += MathPow(series[i] - histMean, 2);
+      }
+      double histVol = MathSqrt(histSumSq / size);
+
+      if(histVol < 1e-10) return 1.0;
+      return recentVol / histVol;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Kelly Fraction for Optimal Position Sizing               |
+   //| Kelly = (p * W - q) / W                                            |
+   //| Where: p = win probability, q = 1-p, W = avg win/avg loss          |
+   //+------------------------------------------------------------------+
+   double CalculateKellyFraction(double winRate, double avgWinLossRatio) {
+      double p = winRate / 100.0;  // Win probability
+      double q = 1.0 - p;          // Loss probability
+
+      if(avgWinLossRatio <= 0 || p <= 0) return 0;
+
+      double kelly = (p * avgWinLossRatio - q) / avgWinLossRatio;
+
+      // Apply half-Kelly for safety
+      kelly *= 0.5;
+
+      // Clamp to reasonable range [0, 0.25]
+      return MathMax(0.0, MathMin(0.25, kelly));
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Expected Return for Mean Reversion Trade                 |
+   //| Based on Z-Score reverting to mean                                 |
+   //+------------------------------------------------------------------+
+   double CalculateExpectedReturn(double zScore, double halfLife, double spreadStdDev) {
+      if(halfLife <= 0 || halfLife > 100) return 0;
+
+      // Expected move = current Z-Score deviation * probability of reversion
+      // Assume reversion to Z=0 with exponential decay
+      double reversionProb = 1.0 - MathExp(-MathLog(2) / halfLife);  // Prob of 50% reversion in halfLife bars
+
+      // Expected Z-Score change
+      double expectedZChange = MathAbs(zScore) * reversionProb;
+
+      // Convert to price move (approximate)
+      double expectedMove = expectedZChange * spreadStdDev;
+
+      return expectedMove;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Overall Pair Quality Score (0-100)                       |
+   //+------------------------------------------------------------------+
+   int CalculateQualityScore(SPairResult &result) {
+      int score = 0;
+
+      // Cointegration (30 points)
+      if(result.isCointegrated) score += 30;
+
+      // R² (20 points)
+      score += (int)(result.rSquared * 20);
+
+      // Hurst Exponent (20 points) - lower is better for mean reversion
+      if(result.hurstExponent < 0.4) score += 20;
+      else if(result.hurstExponent < 0.5) score += 15;
+      else if(result.hurstExponent < 0.55) score += 5;
+
+      // Half-Life (15 points) - optimal is 5-30 bars
+      if(result.halfLife >= 5 && result.halfLife <= 30) score += 15;
+      else if(result.halfLife > 0 && result.halfLife <= 50) score += 8;
+
+      // Zero Crossings (10 points)
+      if(result.zeroCrossings >= 15) score += 10;
+      else if(result.zeroCrossings >= 10) score += 7;
+      else if(result.zeroCrossings >= 5) score += 3;
+
+      // Volatility Ratio penalty (5 points) - prefer normal volatility
+      if(result.volatilityRatio >= 0.7 && result.volatilityRatio <= 1.5) score += 5;
+
+      return MathMin(100, score);
+   }
+
+   //+------------------------------------------------------------------+
    //| Generate Trading Signal                                           |
    //+------------------------------------------------------------------+
    void GenerateSignal(SPairResult &result) {
@@ -415,7 +627,27 @@ public:
                                result.rSquared >= m_minRSquared &&
                                result.halfLife < 50);
 
-      // Step 7: Generate Signal
+      // Step 7: Advanced Analytics
+      result.hurstExponent = CalculateHurstExponent(m_spreadSeries);
+      result.volatilityRatio = CalculateVolatilityRatio(m_spreadSeries);
+      result.expectedReturn = CalculateExpectedReturn(result.zScore, result.halfLife, result.spreadStdDev);
+
+      // Kelly Fraction (assumes 60% win rate and 1.5:1 reward/risk as baseline for pairs trading)
+      double assumedWinRate = result.isCointegrated ? 60.0 : 50.0;
+      double assumedRatio = result.isCointegrated ? 1.5 : 1.0;
+      result.kellyFraction = CalculateKellyFraction(assumedWinRate, assumedRatio);
+
+      // Quality Score
+      result.qualityScore = CalculateQualityScore(result);
+
+      // Step 8: Correlation & Stability Analytics
+      result.priceCorrelation = CalculateCorrelation(m_logPricesA, m_logPricesB);
+      result.varianceRatio = CalculateVarianceRatio(m_spreadSeries, 2);
+      result.autocorrelation = CalculateAutocorrelation(m_spreadSeries, 1);
+      result.spreadStability = CalculateSpreadStability(m_spreadSeries);
+      result.optimalEntryZ = EstimateOptimalEntryZ(m_zScoreSeries, m_spreadSeries);
+
+      // Step 9: Generate Signal
       GenerateSignal(result);
 
       return true;
@@ -472,6 +704,313 @@ public:
    //| Get Lookback Period                                               |
    //+------------------------------------------------------------------+
    int GetLookback() { return m_lookback; }
+
+   // ============================================================
+   // ADVANCED ANALYTICS - CORRELATION & ROLLING STATISTICS
+   // ============================================================
+
+   //+------------------------------------------------------------------+
+   //| Calculate Pearson Correlation Coefficient                         |
+   //+------------------------------------------------------------------+
+   double CalculateCorrelation(double &seriesA[], double &seriesB[]) {
+      int sizeA = ArraySize(seriesA);
+      int sizeB = ArraySize(seriesB);
+      int size = MathMin(sizeA, sizeB);
+
+      if(size < 10) return 0;
+
+      // Calculate means
+      double meanA = 0, meanB = 0;
+      for(int i = 0; i < size; i++) {
+         meanA += seriesA[i];
+         meanB += seriesB[i];
+      }
+      meanA /= size;
+      meanB /= size;
+
+      // Calculate covariance and standard deviations
+      double covAB = 0, varA = 0, varB = 0;
+      for(int i = 0; i < size; i++) {
+         double devA = seriesA[i] - meanA;
+         double devB = seriesB[i] - meanB;
+         covAB += devA * devB;
+         varA += devA * devA;
+         varB += devB * devB;
+      }
+
+      double stdA = MathSqrt(varA / (size - 1));
+      double stdB = MathSqrt(varB / (size - 1));
+
+      if(stdA < 1e-10 || stdB < 1e-10) return 0;
+
+      return (covAB / (size - 1)) / (stdA * stdB);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Rolling Correlation over window                         |
+   //+------------------------------------------------------------------+
+   void CalculateRollingCorrelation(double &seriesA[], double &seriesB[],
+                                     int window, double &rollingCorr[]) {
+      int sizeA = ArraySize(seriesA);
+      int sizeB = ArraySize(seriesB);
+      int size = MathMin(sizeA, sizeB);
+
+      if(size < window + 10) {
+         ArrayResize(rollingCorr, 0);
+         return;
+      }
+
+      int outSize = size - window + 1;
+      ArrayResize(rollingCorr, outSize);
+
+      for(int i = 0; i < outSize; i++) {
+         double subA[], subB[];
+         ArrayResize(subA, window);
+         ArrayResize(subB, window);
+
+         for(int j = 0; j < window; j++) {
+            subA[j] = seriesA[i + j];
+            subB[j] = seriesB[i + j];
+         }
+
+         rollingCorr[i] = CalculateCorrelation(subA, subB);
+      }
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Variance Ratio Test (Lo-MacKinlay)                      |
+   //| Tests for random walk / mean reversion                            |
+   //| VR < 1 suggests mean reversion, VR > 1 suggests trending          |
+   //+------------------------------------------------------------------+
+   double CalculateVarianceRatio(double &series[], int lag = 2) {
+      int size = ArraySize(series);
+      if(size < lag * 10) return 1.0;  // Default to random walk
+
+      // Calculate 1-period returns
+      double returns[];
+      ArrayResize(returns, size - 1);
+      for(int i = 0; i < size - 1; i++) {
+         returns[i] = series[i] - series[i + 1];  // Log differences
+      }
+
+      // Variance of 1-period returns
+      double mean1 = 0;
+      int n1 = ArraySize(returns);
+      for(int i = 0; i < n1; i++) mean1 += returns[i];
+      mean1 /= n1;
+
+      double var1 = 0;
+      for(int i = 0; i < n1; i++) var1 += MathPow(returns[i] - mean1, 2);
+      var1 /= (n1 - 1);
+
+      // Calculate k-period returns
+      int nk = size - lag;
+      if(nk < 10) return 1.0;
+
+      double kReturns[];
+      ArrayResize(kReturns, nk);
+      for(int i = 0; i < nk; i++) {
+         kReturns[i] = series[i] - series[i + lag];
+      }
+
+      double meank = 0;
+      for(int i = 0; i < nk; i++) meank += kReturns[i];
+      meank /= nk;
+
+      double vark = 0;
+      for(int i = 0; i < nk; i++) vark += MathPow(kReturns[i] - meank, 2);
+      vark /= (nk - 1);
+
+      // Variance Ratio
+      if(var1 < 1e-10) return 1.0;
+      return (vark / lag) / var1;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Autocorrelation at specified lag                        |
+   //| Useful for detecting serial correlation in spread                 |
+   //+------------------------------------------------------------------+
+   double CalculateAutocorrelation(double &series[], int lag = 1) {
+      int size = ArraySize(series);
+      if(size < lag + 10) return 0;
+
+      // Calculate mean
+      double mean = 0;
+      for(int i = 0; i < size; i++) mean += series[i];
+      mean /= size;
+
+      // Calculate autocorrelation
+      double numerator = 0, denominator = 0;
+      for(int i = 0; i < size - lag; i++) {
+         numerator += (series[i] - mean) * (series[i + lag] - mean);
+      }
+
+      for(int i = 0; i < size; i++) {
+         denominator += MathPow(series[i] - mean, 2);
+      }
+
+      if(denominator < 1e-10) return 0;
+      return numerator / denominator;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Price Correlation between two symbols                   |
+   //+------------------------------------------------------------------+
+   double GetPairCorrelation(string symbolA, string symbolB, ENUM_TIMEFRAMES tf) {
+      double pricesA[], pricesB[];
+
+      if(!CalculateLogPrices(symbolA, tf, pricesA)) return 0;
+      if(!CalculateLogPrices(symbolB, tf, pricesB)) return 0;
+
+      return CalculateCorrelation(pricesA, pricesB);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get Spread Series (for external use)                              |
+   //+------------------------------------------------------------------+
+   void GetSpreadSeries(double &spread[]) {
+      int size = ArraySize(m_spreadSeries);
+      ArrayResize(spread, size);
+      ArrayCopy(spread, m_spreadSeries, 0, 0, size);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get Z-Score Series (for external use)                             |
+   //+------------------------------------------------------------------+
+   void GetZScoreSeries(double &zscores[]) {
+      int size = ArraySize(m_zScoreSeries);
+      ArrayResize(zscores, size);
+      ArrayCopy(zscores, m_zScoreSeries, 0, 0, size);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Spread Stability Index                                  |
+   //| Measures how stable the spread behavior is over time              |
+   //+------------------------------------------------------------------+
+   double CalculateSpreadStability(double &spread[]) {
+      int size = ArraySize(spread);
+      if(size < 50) return 0;
+
+      // Divide into 5 segments and check consistency
+      int segSize = size / 5;
+      double segMeans[5], segStds[5];
+
+      for(int seg = 0; seg < 5; seg++) {
+         int start = seg * segSize;
+         double sum = 0, sumSq = 0;
+
+         for(int i = start; i < start + segSize; i++) {
+            sum += spread[i];
+         }
+         segMeans[seg] = sum / segSize;
+
+         for(int i = start; i < start + segSize; i++) {
+            sumSq += MathPow(spread[i] - segMeans[seg], 2);
+         }
+         segStds[seg] = MathSqrt(sumSq / (segSize - 1));
+      }
+
+      // Calculate coefficient of variation of segment means and stds
+      double meanOfMeans = 0, meanOfStds = 0;
+      for(int i = 0; i < 5; i++) {
+         meanOfMeans += segMeans[i];
+         meanOfStds += segStds[i];
+      }
+      meanOfMeans /= 5;
+      meanOfStds /= 5;
+
+      double varMeans = 0, varStds = 0;
+      for(int i = 0; i < 5; i++) {
+         varMeans += MathPow(segMeans[i] - meanOfMeans, 2);
+         varStds += MathPow(segStds[i] - meanOfStds, 2);
+      }
+
+      double cvMeans = (meanOfMeans != 0) ? MathSqrt(varMeans / 5) / MathAbs(meanOfMeans) : 1;
+      double cvStds = (meanOfStds > 0) ? MathSqrt(varStds / 5) / meanOfStds : 1;
+
+      // Lower CV = more stable (invert for stability score)
+      double stability = 100 * (1 - MathMin(1, (cvMeans + cvStds) / 2));
+      return MathMax(0, stability);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Rolling Z-Score (returns array)                         |
+   //+------------------------------------------------------------------+
+   void CalculateRollingZScore(double &spread[], int window, double &rollingZ[]) {
+      int size = ArraySize(spread);
+      if(size < window + 10) {
+         ArrayResize(rollingZ, 0);
+         return;
+      }
+
+      int outSize = size - window + 1;
+      ArrayResize(rollingZ, outSize);
+
+      for(int i = 0; i < outSize; i++) {
+         // Calculate mean and std for window
+         double sum = 0, sumSq = 0;
+         for(int j = 0; j < window; j++) {
+            sum += spread[i + j];
+         }
+         double mean = sum / window;
+
+         for(int j = 0; j < window; j++) {
+            sumSq += MathPow(spread[i + j] - mean, 2);
+         }
+         double std = MathSqrt(sumSq / (window - 1));
+
+         // Z-Score at end of window
+         if(std > 1e-10) {
+            rollingZ[i] = (spread[i] - mean) / std;
+         } else {
+            rollingZ[i] = 0;
+         }
+      }
+   }
+
+   //+------------------------------------------------------------------+
+   //| Estimate Optimal Entry Z-Score based on historical performance    |
+   //+------------------------------------------------------------------+
+   double EstimateOptimalEntryZ(double &zscores[], double &spreads[]) {
+      int size = MathMin(ArraySize(zscores), ArraySize(spreads));
+      if(size < 50) return 2.0;  // Default
+
+      // Test different Z thresholds and find best mean reversion rate
+      double bestZ = 2.0;
+      double bestRate = 0;
+
+      for(double testZ = 1.5; testZ <= 3.0; testZ += 0.25) {
+         int entries = 0;
+         int successes = 0;
+
+         for(int i = 20; i < size - 10; i++) {
+            // Entry condition
+            if(MathAbs(zscores[i]) >= testZ) {
+               entries++;
+
+               // Check if Z-score reverted within next 10 bars
+               bool reverted = false;
+               for(int j = 1; j <= 10 && (i + j) < size; j++) {
+                  if(MathAbs(zscores[i + j]) < 0.5) {
+                     reverted = true;
+                     break;
+                  }
+               }
+               if(reverted) successes++;
+            }
+         }
+
+         if(entries >= 5) {
+            double rate = (double)successes / entries;
+            if(rate > bestRate) {
+               bestRate = rate;
+               bestZ = testZ;
+            }
+         }
+      }
+
+      return bestZ;
+   }
 };
 
 //+------------------------------------------------------------------+
