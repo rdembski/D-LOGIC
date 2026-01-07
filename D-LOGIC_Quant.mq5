@@ -3,18 +3,18 @@
 //|              D-LOGIC Professional Pairs Trading Dashboard         |
 //|                                        Author: Rafał Dembski     |
 //|                                                                   |
-//|  Institutional-Grade Statistical Arbitrage System                 |
+//|  Institutional-Grade Statistical Arbitrage System v4.50           |
+//|  - Professional Transparent Chart Overlay                         |
+//|  - Header + Left Panel + Bottom Layout                            |
 //|  - OLS Regression Based Hedge Ratios                              |
 //|  - Z-Score Mean Reversion Strategy                                |
 //|  - Cointegration Testing (ADF + Zero-Crossing)                    |
-//|  - Dollar Neutral Position Sizing                                 |
 //|  - Hurst Exponent & Variance Ratio Testing                        |
 //|  - Correlation & Stability Analytics                              |
-//|  - Dark/Neon Professional UI                                      |
 //+------------------------------------------------------------------+
 #property copyright "Rafał Dembski"
 #property description "D-LOGIC Quant Dashboard - Statistical Arbitrage Engine"
-#property version   "4.30"
+#property version   "4.50"
 #property strict
 
 #include "DLogic_Engine.mqh"
@@ -306,7 +306,7 @@ void CheckSignals() {
 //+------------------------------------------------------------------+
 int OnInit() {
    Print("=======================================================");
-   Print("  D-LOGIC QUANT DASHBOARD v4.30");
+   Print("  D-LOGIC QUANT DASHBOARD v4.50");
    Print("  Statistical Arbitrage Engine");
    Print("  Author: Rafał Dembski");
    Print("-------------------------------------------------------");
