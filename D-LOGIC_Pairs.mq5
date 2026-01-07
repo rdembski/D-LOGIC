@@ -3,15 +3,17 @@
 //|                          Professional Pairs Trading Dashboard    |
 //|                                        Author: RafaB Dembski    |
 //|     Features: Spearman, Cointegration, Z-Score, Multi-Timeframe |
-//|               + Advanced Position Size Calculator                |
+//|               + Position Calculator + Spread Chart + ICT        |
 //+------------------------------------------------------------------+
 #property copyright "RafaB Dembski"
-#property description "Pairs Trading Dashboard - Correlation Scanner with Z-Score & Cointegration Analysis"
-#property version   "2.10"
+#property description "D-LOGIC Professional Trading Dashboard - Pairs + ICT + Risk Management"
+#property version   "3.00"
 #property strict
 
 #include "DLogic_PairsDash.mqh"
 #include "DLogic_Calculator.mqh"
+#include "DLogic_SpreadChart.mqh"
+#include "DLogic_ICT.mqh"
 
 // ============================================================
 // INPUT PARAMETERS
@@ -34,23 +36,28 @@ input ENUM_TIMEFRAMES Inp_TF3 = PERIOD_D1;       // Tertiary timeframe
 input bool     Inp_MultiTF = true;               // Scan multiple timeframes
 
 input group "=== DISPLAY SETTINGS ==="
-input int      Inp_MaxPairs = 25;                // Maximum pairs to display
+input int      Inp_MaxPairs = 20;                // Maximum pairs to display
 input int      Inp_DashX = 10;                   // Dashboard X position
 input int      Inp_DashY = 30;                   // Dashboard Y position
 input bool     Inp_SortBySignal = true;          // Sort by signal strength first
-
-input group "=== ALERTS ==="
-input bool     Inp_AlertsEnabled = true;         // Enable sound alerts
-input bool     Inp_PushEnabled = false;          // Enable push notifications
-input bool     Inp_EmailEnabled = false;         // Enable email alerts
 
 input group "=== POSITION CALCULATOR ==="
 input bool     Inp_ShowCalculator = true;        // Show Position Calculator
 input double   Inp_DefaultRisk = 1.0;            // Default Risk % (0.1-10)
 input double   Inp_DefaultSL = 50;               // Default Stop Loss (pips)
 input double   Inp_DefaultTP = 100;              // Default Take Profit (pips)
-input int      Inp_CalcX = 500;                  // Calculator X position
-input int      Inp_CalcY = 30;                   // Calculator Y position
+
+input group "=== SPREAD CHART ==="
+input bool     Inp_ShowSpreadChart = true;       // Show Spread Chart
+
+input group "=== ICT ANALYSIS ==="
+input bool     Inp_ShowICT = true;               // Show ICT Panel
+input bool     Inp_DrawICTZones = false;         // Auto-draw ICT zones on chart
+
+input group "=== ALERTS ==="
+input bool     Inp_AlertsEnabled = true;         // Enable sound alerts
+input bool     Inp_PushEnabled = false;          // Enable push notifications
+input bool     Inp_EmailEnabled = false;         // Enable email alerts
 
 // ============================================================
 // GLOBAL OBJECTS
@@ -59,6 +66,8 @@ input int      Inp_CalcY = 30;                   // Calculator Y position
 C_PairsCore           *PairsEngine;
 C_PairsDashboard      *Dashboard;
 C_PositionCalculator  *Calculator;
+C_SpreadChart         *SpreadChart;
+C_ICTAnalysis         *ICTPanel;
 
 string           g_symbols[];
 int              g_symbolCount;
@@ -66,6 +75,10 @@ PairResult       g_results[];
 int              g_resultCount;
 datetime         g_lastScan;
 int              g_scanInterval = 60;            // Seconds between auto-scans
+
+// Currently selected pair for spread chart
+string           g_selectedPair1 = "";
+string           g_selectedPair2 = "";
 
 // Timeframes to scan
 ENUM_TIMEFRAMES  g_timeframes[];
@@ -110,17 +123,14 @@ void ParseCustomSymbols() {
 //+------------------------------------------------------------------+
 void InitializeSymbols() {
    if(Inp_AutoLoadSymbols && StringLen(Inp_Pairs) < 3) {
-      // Auto-load from broker
       int loaded = PairsEngine.LoadSymbolsFromBroker();
       PairsEngine.GetSymbols(g_symbols, g_symbolCount);
       Print("[PAIRS] Auto-loaded ", g_symbolCount, " symbols from broker");
    } else {
-      // Use custom symbols
       ParseCustomSymbols();
       Print("[PAIRS] Loaded ", g_symbolCount, " custom symbols");
    }
 
-   // Log loaded symbols
    if(g_symbolCount > 0) {
       string symList = "";
       int showMax = MathMin(10, g_symbolCount);
@@ -148,7 +158,6 @@ void InitializeTimeframes() {
       ArrayResize(g_timeframes, g_tfCount);
       g_timeframes[0] = Inp_TF1;
    }
-
    Print("[PAIRS] Scanning ", g_tfCount, " timeframe(s)");
 }
 
@@ -171,6 +180,33 @@ string GetTFName(ENUM_TIMEFRAMES tf) {
 }
 
 //+------------------------------------------------------------------+
+//| Calculate panel positions based on chart size                     |
+//+------------------------------------------------------------------+
+void CalculatePanelPositions() {
+   int chartWidth = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
+   int chartHeight = (int)ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS);
+
+   // Dashboard is on the left (fixed position from input)
+   // Other panels positioned to the right
+
+   // Calculator - right side, top
+   if(Calculator != NULL) {
+      int calcX = MathMax(400, chartWidth - 300);
+      Calculator.SetPosition(calcX, 30);
+   }
+
+   // Spread Chart - below dashboard on left
+   if(SpreadChart != NULL) {
+      SpreadChart.SetPosition(10, 420);
+   }
+
+   // ICT Panel - below spread chart
+   if(ICTPanel != NULL) {
+      ICTPanel.SetPosition(10, 640);
+   }
+}
+
+//+------------------------------------------------------------------+
 //| Run full scan of all pairs                                        |
 //+------------------------------------------------------------------+
 void RunScan() {
@@ -178,22 +214,16 @@ void RunScan() {
 
    uint startTime = GetTickCount();
 
-   // Calculate max possible results
    int maxPairsPerTF = g_symbolCount * (g_symbolCount - 1) / 2;
    int maxTotal = maxPairsPerTF * g_tfCount;
    ArrayResize(g_results, maxTotal);
    g_resultCount = 0;
 
-   // Get filter symbol
    string filterSymbol = Dashboard.GetSelectedSymbol();
 
-   // Scan all timeframes
    for(int tf = 0; tf < g_tfCount; tf++) {
-      // Scan all unique pairs
       for(int i = 0; i < g_symbolCount - 1; i++) {
-         // Apply symbol filter
          if(filterSymbol != "" && g_symbols[i] != filterSymbol) {
-            // Check if second symbol matches filter
             bool hasMatch = false;
             for(int j = i + 1; j < g_symbolCount; j++) {
                if(g_symbols[j] == filterSymbol) {
@@ -205,7 +235,6 @@ void RunScan() {
          }
 
          for(int j = i + 1; j < g_symbolCount; j++) {
-            // Apply symbol filter for second symbol
             if(filterSymbol != "" && g_symbols[i] != filterSymbol && g_symbols[j] != filterSymbol) {
                continue;
             }
@@ -213,7 +242,6 @@ void RunScan() {
             PairResult result;
 
             if(PairsEngine.AnalyzePair(g_symbols[i], g_symbols[j], g_timeframes[tf], result)) {
-               // Only add pairs with significant correlation
                if(MathAbs(result.spearman) >= Inp_CorrThreshold * 0.8) {
                   g_results[g_resultCount] = result;
                   g_resultCount++;
@@ -223,24 +251,17 @@ void RunScan() {
       }
    }
 
-   // Resize to actual count
    ArrayResize(g_results, g_resultCount);
 
-   // Sort results
    if(Inp_SortBySignal) {
-      // First sort by signal, then by Z-score for non-signals
       Dashboard.SortBySignal(g_results, g_resultCount);
    } else {
       Dashboard.SortByCorrelation(g_results, g_resultCount);
    }
 
-   // Limit to max display
    int displayCount = MathMin(g_resultCount, Inp_MaxPairs);
 
-   // Update dashboard
    Dashboard.UpdateResults(g_results, displayCount);
-
-   // Draw symbol buttons
    Dashboard.DrawSymbolButtons(g_symbols, g_symbolCount);
 
    g_lastScan = TimeCurrent();
@@ -248,7 +269,6 @@ void RunScan() {
    uint endTime = GetTickCount();
    Print("[PAIRS] Scan complete: ", g_resultCount, " pairs found in ", (endTime - startTime), "ms");
 
-   // Check for signals and alert
    if(Inp_AlertsEnabled || Inp_PushEnabled || Inp_EmailEnabled) {
       CheckAndAlert();
    }
@@ -265,12 +285,16 @@ void CheckAndAlert() {
       if(g_results[i].signal != 0) {
          string pairKey = g_results[i].pairName + "|" + g_results[i].tfName;
 
-         // Avoid duplicate alerts within 5 minutes
          if(pairKey == lastAlertPair && TimeCurrent() - lastAlertTime < 300) {
             continue;
          }
 
          string msg = Dashboard.GenerateAlertMessage(g_results[i]);
+
+         // Check ICT Kill Zone for better signals
+         if(ICTPanel != NULL && ICTPanel.IsInKillZone()) {
+            msg = "[KILL ZONE] " + msg;
+         }
 
          if(Inp_AlertsEnabled) {
             Alert(msg);
@@ -296,14 +320,12 @@ void CheckAndAlert() {
 //| Open charts for selected pair                                     |
 //+------------------------------------------------------------------+
 void OpenPairCharts(string sym1, string sym2, ENUM_TIMEFRAMES tf) {
-   // Open first symbol chart
    long chart1 = ChartOpen(sym1, tf);
    if(chart1 > 0) {
       ChartSetInteger(chart1, CHART_BRING_TO_TOP, true);
       Print("[PAIRS] Opened chart: ", sym1, " ", GetTFName(tf));
    }
 
-   // Open second symbol chart
    long chart2 = ChartOpen(sym2, tf);
    if(chart2 > 0) {
       ChartSetInteger(chart2, CHART_BRING_TO_TOP, true);
@@ -316,13 +338,12 @@ void OpenPairCharts(string sym1, string sym2, ENUM_TIMEFRAMES tf) {
 //+------------------------------------------------------------------+
 int OnInit() {
    Print("==============================================");
-   Print("   D-LOGIC PAIRS TRADING DASHBOARD v2.10");
-   Print("   Spearman | Cointegration | Z-Score");
-   Print("   + Position Size Calculator");
+   Print("   D-LOGIC PROFESSIONAL DASHBOARD v3.00");
+   Print("   Pairs Trading + ICT + Risk Management");
    Print("   Author: RafaB Dembski");
    Print("==============================================");
 
-   // Initialize engine
+   // Initialize pairs engine
    PairsEngine = new C_PairsCore();
    PairsEngine.Configure(Inp_Lookback, Inp_CorrThreshold, Inp_ZScoreEntry, Inp_ZScoreExit);
 
@@ -332,20 +353,21 @@ int OnInit() {
 
    // Initialize position calculator
    Calculator = new C_PositionCalculator();
-   Calculator.SetPosition(Inp_CalcX, Inp_CalcY);
    Calculator.SetSymbol(_Symbol);
    Calculator.SetRiskParams(Inp_DefaultRisk, Inp_DefaultSL, Inp_DefaultTP);
 
-   if(Inp_ShowCalculator) {
-      Calculator.Calculate();
-      Calculator.Draw();
-      Print("[CALC] Position Calculator initialized");
-   }
+   // Initialize spread chart
+   SpreadChart = new C_SpreadChart();
 
-   // Initialize timeframes
+   // Initialize ICT analysis
+   ICTPanel = new C_ICTAnalysis();
+   ICTPanel.SetSymbol(_Symbol);
+
+   // Calculate panel positions
+   CalculatePanelPositions();
+
+   // Initialize timeframes and symbols
    InitializeTimeframes();
-
-   // Initialize symbols
    InitializeSymbols();
 
    if(g_symbolCount < 2) {
@@ -358,11 +380,32 @@ int OnInit() {
    // Initial scan
    RunScan();
 
-   // Set timer for periodic updates
+   // Draw optional panels
+   if(Inp_ShowCalculator) {
+      Calculator.Calculate();
+      Calculator.Draw();
+      Print("[CALC] Position Calculator ready");
+   }
+
+   if(Inp_ShowSpreadChart && g_resultCount > 0) {
+      // Set first pair as default for spread chart
+      SpreadChart.SetPair(g_results[0].pair1, g_results[0].pair2);
+      SpreadChart.Update(Inp_TF1);
+      Print("[SPREAD] Spread Chart ready");
+   }
+
+   if(Inp_ShowICT) {
+      ICTPanel.Update(Inp_TF1);
+      if(Inp_DrawICTZones) {
+         ICTPanel.DrawOnChart();
+      }
+      Print("[ICT] ICT Analysis ready - Session: ", ICTPanel.GetActiveSession());
+   }
+
    EventSetTimer(g_scanInterval);
 
-   Print("[PAIRS] Initialization complete - Dashboard ready");
-   Print("[PAIRS] Next auto-scan in ", g_scanInterval, " seconds");
+   Print("[SYSTEM] Initialization complete - Dashboard ready");
+   Print("[SYSTEM] Keyboard shortcuts: C=Calculator, S=Spread, I=ICT");
 
    return INIT_SUCCEEDED;
 }
@@ -373,12 +416,16 @@ int OnInit() {
 void OnDeinit(const int reason) {
    EventKillTimer();
 
+   if(CheckPointer(ICTPanel) == POINTER_DYNAMIC) delete ICTPanel;
+   if(CheckPointer(SpreadChart) == POINTER_DYNAMIC) delete SpreadChart;
    if(CheckPointer(Calculator) == POINTER_DYNAMIC) delete Calculator;
    if(CheckPointer(Dashboard) == POINTER_DYNAMIC) delete Dashboard;
    if(CheckPointer(PairsEngine) == POINTER_DYNAMIC) delete PairsEngine;
 
    ObjectsDeleteAll(0, "DL_PAIRS_");
    ObjectsDeleteAll(0, "DL_CALC_");
+   ObjectsDeleteAll(0, "DL_SPREAD_");
+   ObjectsDeleteAll(0, "DL_ICT_");
 
    string reasonText;
    switch(reason) {
@@ -395,21 +442,23 @@ void OnDeinit(const int reason) {
       default: reasonText = "Unknown";
    }
 
-   Print("[PAIRS] Shutdown: ", reasonText);
+   Print("[SYSTEM] Shutdown: ", reasonText);
 }
 
 //+------------------------------------------------------------------+
 //| Expert tick function                                              |
 //+------------------------------------------------------------------+
 void OnTick() {
-   // Check for new bar on primary timeframe
    static datetime lastBar = 0;
    datetime currentBar = iTime(_Symbol, Inp_TF1, 0);
 
    if(lastBar != currentBar) {
       lastBar = currentBar;
-      // Could trigger rescan on new bar (optional - may be resource intensive)
-      // RunScan();
+
+      // Update ICT on new bar
+      if(ICTPanel != NULL && Inp_ShowICT) {
+         ICTPanel.Update(Inp_TF1);
+      }
    }
 }
 
@@ -417,8 +466,17 @@ void OnTick() {
 //| Timer function                                                    |
 //+------------------------------------------------------------------+
 void OnTimer() {
-   // Periodic rescan
    RunScan();
+
+   // Update spread chart if visible
+   if(SpreadChart != NULL && Inp_ShowSpreadChart && g_selectedPair1 != "") {
+      SpreadChart.Update(Inp_TF1);
+   }
+
+   // Update ICT panel
+   if(ICTPanel != NULL && Inp_ShowICT) {
+      ICTPanel.Update(Inp_TF1);
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -427,12 +485,22 @@ void OnTimer() {
 void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam) {
    // Handle object clicks
    if(id == CHARTEVENT_OBJECT_CLICK) {
-      // First check calculator clicks
+      // Check Calculator clicks
       if(Calculator != NULL && Calculator.HandleClick(sparam)) {
-         return;  // Calculator handled the click
+         return;
       }
 
-      // Then check dashboard clicks
+      // Check Spread Chart clicks
+      if(SpreadChart != NULL && SpreadChart.HandleClick(sparam)) {
+         return;
+      }
+
+      // Check ICT Panel clicks
+      if(ICTPanel != NULL && ICTPanel.HandleClick(sparam)) {
+         return;
+      }
+
+      // Check Dashboard clicks
       string pair1, pair2;
       ENUM_TIMEFRAMES tf;
 
@@ -444,21 +512,37 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
             RunScan();
             break;
 
-         case 2:  // Row clicked - open charts and update calculator
+         case 2:  // Row clicked - open charts and update panels
             Print("[PAIRS] Selected: ", pair1, " / ", pair2, " on ", GetTFName(tf));
             OpenPairCharts(pair1, pair2, tf);
 
-            // Update calculator with selected pair
+            // Update selected pair
+            g_selectedPair1 = pair1;
+            g_selectedPair2 = pair2;
+
+            // Update calculator with first symbol
             if(Calculator != NULL && Inp_ShowCalculator) {
                Calculator.SetSymbol(pair1);
                Calculator.Calculate();
                Calculator.Draw();
             }
+
+            // Update spread chart with selected pair
+            if(SpreadChart != NULL && Inp_ShowSpreadChart) {
+               SpreadChart.SetPair(pair1, pair2);
+               SpreadChart.Update(tf);
+            }
+
+            // Update ICT for first symbol
+            if(ICTPanel != NULL && Inp_ShowICT) {
+               ICTPanel.SetSymbol(pair1);
+               ICTPanel.Update(tf);
+            }
             break;
 
          case 3:  // Symbol filter changed
             Print("[PAIRS] Filter: ", Dashboard.GetSelectedSymbol());
-            RunScan();  // Rescan with filter
+            RunScan();
             break;
       }
    }
@@ -472,16 +556,25 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 
    // Handle chart resize
    if(id == CHARTEVENT_CHART_CHANGE) {
-      // Redraw dashboard
+      CalculatePanelPositions();
+
       if(g_resultCount > 0) {
          int displayCount = MathMin(g_resultCount, Inp_MaxPairs);
          Dashboard.UpdateResults(g_results, displayCount);
          Dashboard.DrawSymbolButtons(g_symbols, g_symbolCount);
       }
 
-      // Redraw calculator
       if(Calculator != NULL && Inp_ShowCalculator) {
+         Calculator.Calculate();
          Calculator.Draw();
+      }
+
+      if(SpreadChart != NULL && Inp_ShowSpreadChart) {
+         SpreadChart.Draw();
+      }
+
+      if(ICTPanel != NULL && Inp_ShowICT) {
+         ICTPanel.Draw();
       }
    }
 
@@ -494,6 +587,36 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
             Print("[CALC] Calculator ", Calculator.IsVisible() ? "shown" : "hidden");
          }
       }
+
+      // 'S' key to toggle spread chart
+      if(lparam == 'S' || lparam == 's') {
+         if(SpreadChart != NULL) {
+            SpreadChart.ToggleVisibility();
+            Print("[SPREAD] Spread Chart ", SpreadChart.IsVisible() ? "shown" : "hidden");
+         }
+      }
+
+      // 'I' key to toggle ICT panel
+      if(lparam == 'I' || lparam == 'i') {
+         if(ICTPanel != NULL) {
+            ICTPanel.ToggleVisibility();
+            Print("[ICT] ICT Panel ", ICTPanel.IsVisible() ? "shown" : "hidden");
+         }
+      }
+
+      // 'D' key to draw ICT zones on chart
+      if(lparam == 'D' || lparam == 'd') {
+         if(ICTPanel != NULL) {
+            ICTPanel.DrawOnChart();
+            Print("[ICT] Drew FVG and Order Block zones on chart");
+         }
+      }
+
+      // 'R' key to refresh/rescan
+      if(lparam == 'R' || lparam == 'r') {
+         Print("[SYSTEM] Manual refresh triggered");
+         RunScan();
+      }
    }
 }
 
@@ -501,7 +624,6 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 //| Tester function (for strategy testing)                            |
 //+------------------------------------------------------------------+
 double OnTester() {
-   // Return metric for optimization
    int signalCount = 0;
    double avgCorr = 0;
 
