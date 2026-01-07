@@ -1,28 +1,28 @@
 //+------------------------------------------------------------------+
 //|                                          DLogic_SpreadChart.mqh |
 //|                          Project: D-LOGIC Trading Dashboard      |
-//|                                        Author: RafaB Dembski    |
+//|                                        Author: Rafał Dembski    |
 //|                    Spread Visualization for Pairs Trading        |
 //+------------------------------------------------------------------+
-#property copyright "RafaB Dembski"
+#property copyright "Rafał Dembski"
 #property strict
 
 // ============================================================
-// COLOR SCHEME - BRIGHTER VERSION
+// COLOR SCHEME - SUPER BRIGHT VERSION
 // ============================================================
-#define SPREAD_BG_MAIN     C'25,28,35'
-#define SPREAD_BG_HEADER   C'120,50,180'
-#define SPREAD_BG_CHART    C'35,40,50'
-#define SPREAD_LINE_UP     C'0,255,150'
-#define SPREAD_LINE_DOWN   C'255,100,100'
-#define SPREAD_LINE_MEAN   C'255,220,50'
-#define SPREAD_LINE_STD1   C'100,200,255'
-#define SPREAD_LINE_STD2   C'200,150,255'
-#define SPREAD_BORDER      C'80,85,100'
-#define SPREAD_TEXT        C'240,240,245'
-#define SPREAD_TEXT_DIM    C'160,160,180'
-#define SPREAD_CYAN        C'50,255,255'
-#define SPREAD_GRID        C'50,55,65'
+#define SPREAD_BG_MAIN     C'30,35,45'
+#define SPREAD_BG_HEADER   C'140,60,200'
+#define SPREAD_BG_CHART    C'45,50,65'
+#define SPREAD_LINE_UP     C'0,255,100'       // Bright green
+#define SPREAD_LINE_DOWN   C'255,80,80'       // Bright red
+#define SPREAD_LINE_MEAN   C'255,255,0'       // Pure yellow
+#define SPREAD_LINE_STD1   C'0,200,255'       // Cyan
+#define SPREAD_LINE_STD2   C'255,150,255'     // Magenta
+#define SPREAD_BORDER      C'100,110,130'
+#define SPREAD_TEXT        C'255,255,255'     // Pure white
+#define SPREAD_TEXT_DIM    C'180,180,200'
+#define SPREAD_CYAN        C'0,255,255'       // Pure cyan
+#define SPREAD_GRID        C'60,65,80'
 
 //+------------------------------------------------------------------+
 //| Spread Chart Class                                                |
@@ -109,18 +109,27 @@ private:
    }
 
    //+------------------------------------------------------------------+
-   //| Delete all content objects (for minimize)                         |
+   //| Delete ALL content objects (for minimize) - FIXED VERSION        |
    //+------------------------------------------------------------------+
-   void DeleteContentObjects() {
-      // Delete everything except title bar elements
-      ObjectsDeleteAll(0, m_prefix + "CHART_");
-      ObjectsDeleteAll(0, m_prefix + "PT_");
-      ObjectsDeleteAll(0, m_prefix + "MEAN_");
-      ObjectsDeleteAll(0, m_prefix + "STATS");
-      ObjectsDeleteAll(0, m_prefix + "SIGNAL");
-      ObjectsDeleteAll(0, m_prefix + "FOOTER");
-      ObjectsDeleteAll(0, m_prefix + "LBL_STD");
-      ObjectsDeleteAll(0, m_prefix + "LBL_MEAN");
+   void DeleteAllContent() {
+      // Delete ALL objects with our prefix EXCEPT title bar elements
+      int total = ObjectsTotal(0, 0, -1);
+
+      for(int i = total - 1; i >= 0; i--) {
+         string name = ObjectName(0, i, 0, -1);
+
+         // Skip if not our object
+         if(StringFind(name, m_prefix) != 0) continue;
+
+         // Keep only these objects when minimized:
+         // BG, TITLE_BG, TITLE, BTN_MIN
+         if(StringFind(name, m_prefix + "BG") == 0) continue;
+         if(StringFind(name, m_prefix + "TITLE") == 0) continue;
+         if(StringFind(name, m_prefix + "BTN_MIN") == 0) continue;
+
+         // Delete everything else
+         ObjectDelete(0, name);
+      }
    }
 
    //+------------------------------------------------------------------+
@@ -182,10 +191,10 @@ private:
    //| Draw spread line chart                                            |
    //+------------------------------------------------------------------+
    void DrawSpreadLine() {
-      int chartX = m_startX + 8;
-      int chartY = m_startY + 48;
-      int chartW = m_width - 45;
-      int chartH = m_height - 75;
+      int chartX = m_startX + 10;
+      int chartY = m_startY + 50;
+      int chartW = m_width - 50;
+      int chartH = m_height - 80;
 
       // Chart background - brighter
       CreateRect("CHART_BG", chartX, chartY, chartW, chartH, SPREAD_BG_CHART, SPREAD_GRID);
@@ -218,14 +227,14 @@ private:
       std2UpY = MathMax(chartY, MathMin(chartY + chartH - 1, std2UpY));
       std2DnY = MathMax(chartY, MathMin(chartY + chartH - 1, std2DnY));
 
-      // Draw horizontal level lines
+      // Draw horizontal level lines - BRIGHT
       CreateRect("MEAN_LINE", chartX, meanY, chartW, 2, SPREAD_LINE_MEAN);
-      CreateRect("CHART_STD1U", chartX, std1UpY, chartW, 1, SPREAD_LINE_STD1);
-      CreateRect("CHART_STD1D", chartX, std1DnY, chartW, 1, SPREAD_LINE_STD1);
-      CreateRect("CHART_STD2U", chartX, std2UpY, chartW, 1, SPREAD_LINE_STD2);
-      CreateRect("CHART_STD2D", chartX, std2DnY, chartW, 1, SPREAD_LINE_STD2);
+      CreateRect("STD1U_LINE", chartX, std1UpY, chartW, 1, SPREAD_LINE_STD1);
+      CreateRect("STD1D_LINE", chartX, std1DnY, chartW, 1, SPREAD_LINE_STD1);
+      CreateRect("STD2U_LINE", chartX, std2UpY, chartW, 1, SPREAD_LINE_STD2);
+      CreateRect("STD2D_LINE", chartX, std2DnY, chartW, 1, SPREAD_LINE_STD2);
 
-      // Draw spread points
+      // Draw spread points - BRIGHT
       int pointW = MathMax(2, chartW / m_lookback);
       int displayPoints = MathMin(m_lookback, chartW / pointW);
 
@@ -251,14 +260,14 @@ private:
          ObjectSetInteger(0, pointName, OBJPROP_XSIZE, MathMax(3, pointW - 1));
          ObjectSetInteger(0, pointName, OBJPROP_YSIZE, 4);
 
-         // Color based on position relative to mean - BRIGHTER
+         // Color based on position relative to mean - SUPER BRIGHT
          color pointColor;
          if(m_spreadValues[idx] > m_spreadMean + m_spreadStd) {
-            pointColor = SPREAD_LINE_DOWN;  // Overbought - red
+            pointColor = SPREAD_LINE_DOWN;  // RED - Overbought
          } else if(m_spreadValues[idx] < m_spreadMean - m_spreadStd) {
-            pointColor = SPREAD_LINE_UP;    // Oversold - green
+            pointColor = SPREAD_LINE_UP;    // GREEN - Oversold
          } else {
-            pointColor = SPREAD_CYAN;       // Normal - cyan
+            pointColor = SPREAD_CYAN;       // CYAN - Normal
          }
 
          ObjectSetInteger(0, pointName, OBJPROP_BGCOLOR, pointColor);
@@ -269,12 +278,12 @@ private:
       }
 
       // Labels for std levels - positioned outside chart
-      int labelX = chartX + chartW + 3;
-      CreateLabel("LBL_STD2U", "+2s", labelX, std2UpY - 5, SPREAD_LINE_STD2, 7);
-      CreateLabel("LBL_STD1U", "+1s", labelX, std1UpY - 5, SPREAD_LINE_STD1, 7);
-      CreateLabel("LBL_MEAN", "Mean", labelX, meanY - 5, SPREAD_LINE_MEAN, 7);
-      CreateLabel("LBL_STD1D", "-1s", labelX, std1DnY - 5, SPREAD_LINE_STD1, 7);
-      CreateLabel("LBL_STD2D", "-2s", labelX, std2DnY - 5, SPREAD_LINE_STD2, 7);
+      int labelX = chartX + chartW + 5;
+      CreateLabel("LBL_2U", "+2LE", labelX, std2UpY - 5, SPREAD_LINE_STD2, 7);
+      CreateLabel("LBL_1U", "+1LE", labelX, std1UpY - 5, SPREAD_LINE_STD1, 7);
+      CreateLabel("LBL_MN", "Mean", labelX, meanY - 5, SPREAD_LINE_MEAN, 7);
+      CreateLabel("LBL_1D", "-1LE", labelX, std1DnY - 5, SPREAD_LINE_STD1, 7);
+      CreateLabel("LBL_2D", "-2LE", labelX, std2DnY - 5, SPREAD_LINE_STD2, 7);
    }
 
 public:
@@ -342,23 +351,23 @@ public:
       int y = m_startY;
       int w = m_width;
 
-      // Clear content if minimized
+      // Delete content if minimized
       if(m_isMinimized) {
-         DeleteContentObjects();
+         DeleteAllContent();
       }
 
-      // Main background
-      CreateRect("BG", x, y, w, m_isMinimized ? 24 : m_height, SPREAD_BG_MAIN, SPREAD_BG_HEADER);
+      // Main background - size depends on state
+      CreateRect("BG", x, y, w, m_isMinimized ? 26 : m_height, SPREAD_BG_MAIN, SPREAD_BG_HEADER);
 
       // Title bar
-      CreateRect("TITLE_BG", x, y, w, 24, SPREAD_BG_HEADER, SPREAD_BG_HEADER);
+      CreateRect("TITLE_BG", x, y, w, 26, SPREAD_BG_HEADER, SPREAD_BG_HEADER);
 
       string title = "Spread: " + m_symbol1 + " / " + m_symbol2;
       if(m_symbol1 == "") title = "Spread Chart";
-      CreateLabel("TITLE", title, x + 8, y + 5, SPREAD_TEXT, 9, "Consolas Bold");
+      CreateLabel("TITLE", title, x + 10, y + 6, SPREAD_TEXT, 9, "Consolas Bold");
 
       // Minimize button
-      CreateButton("BTN_MIN", m_isMinimized ? "+" : "-", x + w - 25, y + 3, 20, 18, C'80,50,120', SPREAD_TEXT, 10);
+      CreateButton("BTN_MIN", m_isMinimized ? "+" : "-", x + w - 25, y + 4, 20, 18, C'100,50,150', SPREAD_TEXT, 10);
 
       if(m_isMinimized) {
          ChartRedraw(0);
@@ -366,13 +375,13 @@ public:
       }
 
       // Stats row
-      int statsY = y + 27;
+      int statsY = y + 30;
       string statsText = "Z: " + DoubleToString(m_currentZScore, 2) +
-                        " | HR: " + DoubleToString(m_hedgeRatio, 3) +
-                        " | Std: " + DoubleToString(m_spreadStd, 5);
-      CreateLabel("STATS", statsText, x + 8, statsY, SPREAD_TEXT_DIM, 7);
+                        " | HR: " + DoubleToString(m_hedgeRatio, 4) +
+                        " | LE: " + DoubleToString(m_spreadStd, 7) + "Label";
+      CreateLabel("STATS", statsText, x + 10, statsY, SPREAD_TEXT_DIM, 7);
 
-      // Signal indicator
+      // Signal indicator - BRIGHT
       string signal = "";
       color sigColor = SPREAD_TEXT_DIM;
 
@@ -390,16 +399,14 @@ public:
          sigColor = SPREAD_TEXT_DIM;
       }
 
-      CreateLabel("SIGNAL", signal, x + w - 85, statsY, sigColor, 8, "Consolas Bold");
-
       // Draw spread line chart
       if(m_symbol1 != "" && m_symbol2 != "" && ArraySize(m_spreadValues) > 0) {
          DrawSpreadLine();
       }
 
-      // Footer
-      int footerY = y + m_height - 18;
-      CreateLabel("FOOTER", "Green=Buy | Yellow=Mean | Red=Sell", x + 8, footerY, SPREAD_TEXT_DIM, 7);
+      // Footer legend - BRIGHT
+      int footerY = y + m_height - 20;
+      CreateLabel("FOOTER", "Green=Oversold | Yellow=Mean | Red=Overbought", x + 10, footerY, SPREAD_TEXT_DIM, 7);
 
       ChartRedraw(0);
    }
@@ -411,6 +418,12 @@ public:
       if(sparam == m_prefix + "BTN_MIN") {
          m_isMinimized = !m_isMinimized;
          ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+
+         if(m_isMinimized) {
+            // Delete all content objects first
+            DeleteAllContent();
+         }
+
          Draw();
          return true;
       }

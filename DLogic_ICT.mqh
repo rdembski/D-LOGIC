@@ -1,31 +1,31 @@
 //+------------------------------------------------------------------+
 //|                                                 DLogic_ICT.mqh  |
 //|                          Project: D-LOGIC Trading Dashboard      |
-//|                                        Author: RafaB Dembski    |
+//|                                        Author: Rafał Dembski    |
 //|      ICT Concepts: Kill Zones, Sessions, FVG, Order Blocks       |
 //+------------------------------------------------------------------+
-#property copyright "RafaB Dembski"
+#property copyright "Rafał Dembski"
 #property strict
 
 // ============================================================
-// COLOR SCHEME
+// COLOR SCHEME - BRIGHT
 // ============================================================
-#define ICT_BG_MAIN        C'20,22,28'
-#define ICT_BG_HEADER      C'180,100,20'
-#define ICT_LONDON         C'30,120,220'
-#define ICT_NEWYORK        C'220,60,60'
-#define ICT_ASIA           C'180,140,60'
-#define ICT_KILLZONE       C'255,80,80'
-#define ICT_FVG_BULL       C'0,180,100,80'
-#define ICT_FVG_BEAR       C'180,60,100,80'
-#define ICT_OB_BULL        C'30,130,200'
-#define ICT_OB_BEAR        C'200,100,30'
-#define ICT_BORDER         C'60,65,80'
-#define ICT_TEXT           C'230,230,235'
-#define ICT_TEXT_DIM       C'140,140,160'
-#define ICT_POSITIVE       C'0,240,130'
-#define ICT_NEGATIVE       C'255,90,90'
-#define ICT_WARNING        C'255,200,50'
+#define ICT_BG_MAIN        C'25,28,35'
+#define ICT_BG_HEADER      C'200,120,30'
+#define ICT_LONDON         C'50,150,255'
+#define ICT_NEWYORK        C'255,80,80'
+#define ICT_ASIA           C'220,180,80'
+#define ICT_KILLZONE       C'255,50,50'
+#define ICT_FVG_BULL       C'0,180,100'
+#define ICT_FVG_BEAR       C'180,60,100'
+#define ICT_OB_BULL        C'30,130,220'
+#define ICT_OB_BEAR        C'220,100,30'
+#define ICT_BORDER         C'80,85,100'
+#define ICT_TEXT           C'255,255,255'
+#define ICT_TEXT_DIM       C'160,160,180'
+#define ICT_POSITIVE       C'0,255,120'
+#define ICT_NEGATIVE       C'255,80,80'
+#define ICT_WARNING        C'255,220,50'
 
 // ============================================================
 // SESSION TIMES (GMT/UTC)
@@ -167,13 +167,27 @@ private:
    }
 
    //+------------------------------------------------------------------+
-   //| Delete content objects (for minimize)                             |
+   //| Delete ALL content objects (for minimize) - FIXED                 |
    //+------------------------------------------------------------------+
-   void DeleteContentObjects() {
-      ObjectsDeleteAll(0, m_prefix + "LBL_");
-      ObjectsDeleteAll(0, m_prefix + "SESS_");
-      ObjectsDeleteAll(0, m_prefix + "KZ_");
-      ObjectsDeleteAll(0, m_prefix + "VAL_");
+   void DeleteAllContent() {
+      int total = ObjectsTotal(0, 0, -1);
+
+      for(int i = total - 1; i >= 0; i--) {
+         string name = ObjectName(0, i, 0, -1);
+
+         // Skip if not our panel object
+         if(StringFind(name, m_prefix) != 0) continue;
+
+         // Keep title bar objects
+         if(StringFind(name, m_prefix + "BG") == 0) continue;
+         if(StringFind(name, m_prefix + "TITLE") == 0) continue;
+         if(StringFind(name, m_prefix + "BTN_") == 0) continue;
+
+         // Delete content objects (but not chart zones)
+         if(StringFind(name, "ZONE_") < 0 && StringFind(name, "LBL_ZONE") < 0) {
+            ObjectDelete(0, name);
+         }
+      }
    }
 
    //+------------------------------------------------------------------+
@@ -233,11 +247,11 @@ private:
    }
 
    //+------------------------------------------------------------------+
-   //| Detect Fair Value Gaps (simplified algorithm)                     |
+   //| Detect Fair Value Gaps - IMPROVED ALGORITHM                       |
    //+------------------------------------------------------------------+
-   void DetectFVG(ENUM_TIMEFRAMES tf, int lookback = 100) {
+   void DetectFVG(ENUM_TIMEFRAMES tf, int lookback = 50) {
       m_fvgCount = 0;
-      ArrayResize(m_fvgList, 30);
+      ArrayResize(m_fvgList, 50);
 
       double high[], low[], open[], close[];
       datetime time[];
@@ -249,28 +263,35 @@ private:
       ArraySetAsSeries(time, true);
 
       int copied = CopyHigh(m_symbol, tf, 0, lookback, high);
-      if(copied < lookback) return;
+      if(copied < lookback) {
+         Print("[ICT] Not enough data for FVG detection, got ", copied, " bars");
+         return;
+      }
       CopyLow(m_symbol, tf, 0, lookback, low);
       CopyOpen(m_symbol, tf, 0, lookback, open);
       CopyClose(m_symbol, tf, 0, lookback, close);
       CopyTime(m_symbol, tf, 0, lookback, time);
 
       double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-      double minGap = point * 10;  // Minimum 10 points gap
+      double minGap = point * 3;  // Minimum 3 points gap (lowered for more detection)
 
-      for(int i = 1; i < lookback - 2 && m_fvgCount < 30; i++) {
-         // Bullish FVG: candle[i+1] high < candle[i-1] low (gap up)
+      Print("[ICT] Scanning for FVG on ", m_symbol, " ", EnumToString(tf), ", min gap: ", minGap);
+
+      for(int i = 2; i < lookback - 1 && m_fvgCount < 50; i++) {
+         // Bullish FVG: Gap UP - bar[i+1].high < bar[i-1].low
+         // bar[i] is the impulse candle creating the gap
          double gapUp = low[i-1] - high[i+1];
+
          if(gapUp > minGap) {
             FVG fvg;
             fvg.time = time[i];
-            fvg.high = low[i-1];
-            fvg.low = high[i+1];
+            fvg.high = low[i-1];      // Top of gap
+            fvg.low = high[i+1];      // Bottom of gap
             fvg.isBullish = true;
             fvg.barIndex = i;
             fvg.isFilled = false;
 
-            // Check if filled by subsequent candles
+            // Check if filled by price coming back into gap
             for(int j = i-1; j >= 0; j--) {
                if(low[j] <= fvg.low) {
                   fvg.isFilled = true;
@@ -278,19 +299,22 @@ private:
                }
             }
 
-            if(!fvg.isFilled) {
+            // Only keep unfilled recent gaps
+            if(!fvg.isFilled && i < 30) {
                m_fvgList[m_fvgCount] = fvg;
                m_fvgCount++;
+               Print("[ICT] Found Bullish FVG at bar ", i, ", gap size: ", gapUp / point, " points");
             }
          }
 
-         // Bearish FVG: candle[i+1] low > candle[i-1] high (gap down)
+         // Bearish FVG: Gap DOWN - bar[i+1].low > bar[i-1].high
          double gapDown = low[i+1] - high[i-1];
+
          if(gapDown > minGap) {
             FVG fvg;
             fvg.time = time[i];
-            fvg.high = low[i+1];
-            fvg.low = high[i-1];
+            fvg.high = low[i+1];      // Top of gap
+            fvg.low = high[i-1];      // Bottom of gap
             fvg.isBullish = false;
             fvg.barIndex = i;
             fvg.isFilled = false;
@@ -303,20 +327,23 @@ private:
                }
             }
 
-            if(!fvg.isFilled) {
+            if(!fvg.isFilled && i < 30) {
                m_fvgList[m_fvgCount] = fvg;
                m_fvgCount++;
+               Print("[ICT] Found Bearish FVG at bar ", i, ", gap size: ", gapDown / point, " points");
             }
          }
       }
+
+      Print("[ICT] Total FVG found: ", m_fvgCount);
    }
 
    //+------------------------------------------------------------------+
-   //| Detect Order Blocks (simplified)                                  |
+   //| Detect Order Blocks - IMPROVED ALGORITHM                          |
    //+------------------------------------------------------------------+
-   void DetectOrderBlocks(ENUM_TIMEFRAMES tf, int lookback = 100) {
+   void DetectOrderBlocks(ENUM_TIMEFRAMES tf, int lookback = 50) {
       m_obCount = 0;
-      ArrayResize(m_obList, 30);
+      ArrayResize(m_obList, 50);
 
       double high[], low[], open[], close[];
       datetime time[];
@@ -328,28 +355,36 @@ private:
       ArraySetAsSeries(time, true);
 
       int copied = CopyHigh(m_symbol, tf, 0, lookback, high);
-      if(copied < lookback) return;
+      if(copied < lookback) {
+         Print("[ICT] Not enough data for OB detection");
+         return;
+      }
       CopyLow(m_symbol, tf, 0, lookback, low);
       CopyOpen(m_symbol, tf, 0, lookback, open);
       CopyClose(m_symbol, tf, 0, lookback, close);
       CopyTime(m_symbol, tf, 0, lookback, time);
 
+      // Calculate average range for comparison
       double avgRange = 0;
       for(int i = 0; i < 20; i++) {
          avgRange += high[i] - low[i];
       }
       avgRange /= 20;
 
-      for(int i = 2; i < lookback - 2 && m_obCount < 30; i++) {
+      Print("[ICT] Scanning for Order Blocks, avg range: ", avgRange);
+
+      for(int i = 3; i < lookback - 2 && m_obCount < 50; i++) {
          double candleRange = high[i] - low[i];
          double bodySize = MathAbs(close[i] - open[i]);
-         bool isBearish = close[i] < open[i];
-         bool isBullish = close[i] > open[i];
+         bool isBearishCandle = close[i] < open[i];
+         bool isBullishCandle = close[i] > open[i];
 
-         // Bullish OB: Bearish candle followed by strong bullish move
-         if(isBearish && bodySize > avgRange * 0.5) {
-            double nextMove = close[i-1] - close[i];
-            if(nextMove > avgRange * 1.5) {
+         // Bullish Order Block: Last bearish candle before strong bullish move
+         if(isBearishCandle && bodySize > avgRange * 0.3) {
+            // Check for strong bullish continuation
+            double moveUp = close[i-2] - close[i];
+
+            if(moveUp > avgRange * 1.0) {  // Lowered threshold
                OrderBlock ob;
                ob.time = time[i];
                ob.high = high[i];
@@ -360,7 +395,7 @@ private:
                ob.barIndex = i;
                ob.isMitigated = false;
 
-               // Check mitigation
+               // Check if price has come back to OB (mitigated)
                for(int j = i-1; j >= 0; j--) {
                   if(low[j] <= ob.low) {
                      ob.isMitigated = true;
@@ -368,17 +403,19 @@ private:
                   }
                }
 
-               if(!ob.isMitigated) {
+               if(!ob.isMitigated && i < 30) {
                   m_obList[m_obCount] = ob;
                   m_obCount++;
+                  Print("[ICT] Found Bullish OB at bar ", i);
                }
             }
          }
 
-         // Bearish OB: Bullish candle followed by strong bearish move
-         if(isBullish && bodySize > avgRange * 0.5) {
-            double nextMove = close[i] - close[i-1];
-            if(nextMove > avgRange * 1.5) {
+         // Bearish Order Block: Last bullish candle before strong bearish move
+         if(isBullishCandle && bodySize > avgRange * 0.3) {
+            double moveDown = close[i] - close[i-2];
+
+            if(moveDown > avgRange * 1.0) {
                OrderBlock ob;
                ob.time = time[i];
                ob.high = high[i];
@@ -397,29 +434,40 @@ private:
                   }
                }
 
-               if(!ob.isMitigated) {
+               if(!ob.isMitigated && i < 30) {
                   m_obList[m_obCount] = ob;
                   m_obCount++;
+                  Print("[ICT] Found Bearish OB at bar ", i);
                }
             }
          }
       }
+
+      Print("[ICT] Total Order Blocks found: ", m_obCount);
    }
 
    //+------------------------------------------------------------------+
    //| Draw FVG zones on chart                                           |
    //+------------------------------------------------------------------+
    void DrawFVGOnChart() {
+      // Clear existing FVG zones
       ObjectsDeleteAll(0, m_prefix + "FVG_ZONE_");
+      ObjectsDeleteAll(0, m_prefix + "FVG_LBL_");
+
+      datetime futureTime = TimeCurrent() + PeriodSeconds(PERIOD_H4) * 20;
 
       for(int i = 0; i < m_fvgCount; i++) {
          string rectName = m_prefix + "FVG_ZONE_" + IntegerToString(i);
 
-         ObjectCreate(0, rectName, OBJ_RECTANGLE, 0,
-                     m_fvgList[i].time, m_fvgList[i].high,
-                     TimeCurrent() + PeriodSeconds(PERIOD_D1), m_fvgList[i].low);
+         // Create rectangle on chart
+         if(!ObjectCreate(0, rectName, OBJ_RECTANGLE, 0,
+                         m_fvgList[i].time, m_fvgList[i].high,
+                         futureTime, m_fvgList[i].low)) {
+            Print("[ICT] Failed to create FVG rectangle: ", GetLastError());
+            continue;
+         }
 
-         color fvgColor = m_fvgList[i].isBullish ? C'0,150,80' : C'150,50,80';
+         color fvgColor = m_fvgList[i].isBullish ? C'0,180,80' : C'180,50,80';
 
          ObjectSetInteger(0, rectName, OBJPROP_COLOR, fvgColor);
          ObjectSetInteger(0, rectName, OBJPROP_FILL, true);
@@ -427,36 +475,43 @@ private:
          ObjectSetInteger(0, rectName, OBJPROP_SELECTABLE, false);
          ObjectSetInteger(0, rectName, OBJPROP_HIDDEN, false);
          ObjectSetInteger(0, rectName, OBJPROP_WIDTH, 1);
-         ObjectSetInteger(0, rectName, OBJPROP_STYLE, STYLE_SOLID);
 
-         // Add label
+         // Add text label
          string labelName = m_prefix + "FVG_LBL_" + IntegerToString(i);
-         ObjectCreate(0, labelName, OBJ_TEXT, 0,
-                     m_fvgList[i].time, (m_fvgList[i].high + m_fvgList[i].low) / 2);
+         double midPrice = (m_fvgList[i].high + m_fvgList[i].low) / 2;
+
+         ObjectCreate(0, labelName, OBJ_TEXT, 0, m_fvgList[i].time, midPrice);
          ObjectSetString(0, labelName, OBJPROP_TEXT, m_fvgList[i].isBullish ? "FVG+" : "FVG-");
          ObjectSetInteger(0, labelName, OBJPROP_COLOR, clrWhite);
-         ObjectSetInteger(0, labelName, OBJPROP_FONTSIZE, 7);
-         ObjectSetString(0, labelName, OBJPROP_FONT, "Arial");
-         ObjectSetInteger(0, labelName, OBJPROP_ANCHOR, ANCHOR_CENTER);
+         ObjectSetInteger(0, labelName, OBJPROP_FONTSIZE, 8);
+         ObjectSetString(0, labelName, OBJPROP_FONT, "Arial Bold");
+         ObjectSetInteger(0, labelName, OBJPROP_ANCHOR, ANCHOR_LEFT);
       }
 
-      Print("[ICT] Drew ", m_fvgCount, " FVG zones");
+      Print("[ICT] Drew ", m_fvgCount, " FVG zones on chart");
    }
 
    //+------------------------------------------------------------------+
    //| Draw Order Blocks on chart                                        |
    //+------------------------------------------------------------------+
    void DrawOBOnChart() {
+      // Clear existing OB zones
       ObjectsDeleteAll(0, m_prefix + "OB_ZONE_");
+      ObjectsDeleteAll(0, m_prefix + "OB_LBL_");
+
+      datetime futureTime = TimeCurrent() + PeriodSeconds(PERIOD_H4) * 20;
 
       for(int i = 0; i < m_obCount; i++) {
          string rectName = m_prefix + "OB_ZONE_" + IntegerToString(i);
 
-         ObjectCreate(0, rectName, OBJ_RECTANGLE, 0,
-                     m_obList[i].time, m_obList[i].high,
-                     TimeCurrent() + PeriodSeconds(PERIOD_D1), m_obList[i].low);
+         if(!ObjectCreate(0, rectName, OBJ_RECTANGLE, 0,
+                         m_obList[i].time, m_obList[i].high,
+                         futureTime, m_obList[i].low)) {
+            Print("[ICT] Failed to create OB rectangle: ", GetLastError());
+            continue;
+         }
 
-         color obColor = m_obList[i].isBullish ? C'30,100,180' : C'180,80,30';
+         color obColor = m_obList[i].isBullish ? C'30,120,200' : C'200,100,30';
 
          ObjectSetInteger(0, rectName, OBJPROP_COLOR, obColor);
          ObjectSetInteger(0, rectName, OBJPROP_FILL, true);
@@ -464,20 +519,20 @@ private:
          ObjectSetInteger(0, rectName, OBJPROP_SELECTABLE, false);
          ObjectSetInteger(0, rectName, OBJPROP_HIDDEN, false);
          ObjectSetInteger(0, rectName, OBJPROP_WIDTH, 2);
-         ObjectSetInteger(0, rectName, OBJPROP_STYLE, STYLE_SOLID);
 
          // Add label
          string labelName = m_prefix + "OB_LBL_" + IntegerToString(i);
-         ObjectCreate(0, labelName, OBJ_TEXT, 0,
-                     m_obList[i].time, (m_obList[i].high + m_obList[i].low) / 2);
+         double midPrice = (m_obList[i].high + m_obList[i].low) / 2;
+
+         ObjectCreate(0, labelName, OBJ_TEXT, 0, m_obList[i].time, midPrice);
          ObjectSetString(0, labelName, OBJPROP_TEXT, m_obList[i].isBullish ? "OB+" : "OB-");
          ObjectSetInteger(0, labelName, OBJPROP_COLOR, clrWhite);
-         ObjectSetInteger(0, labelName, OBJPROP_FONTSIZE, 8);
+         ObjectSetInteger(0, labelName, OBJPROP_FONTSIZE, 9);
          ObjectSetString(0, labelName, OBJPROP_FONT, "Arial Bold");
-         ObjectSetInteger(0, labelName, OBJPROP_ANCHOR, ANCHOR_CENTER);
+         ObjectSetInteger(0, labelName, OBJPROP_ANCHOR, ANCHOR_LEFT);
       }
 
-      Print("[ICT] Drew ", m_obCount, " Order Block zones");
+      Print("[ICT] Drew ", m_obCount, " Order Block zones on chart");
    }
 
 public:
@@ -489,7 +544,7 @@ public:
       m_startX = 10;
       m_startY = 600;
       m_width = 280;
-      m_height = 165;
+      m_height = 175;
       m_isVisible = true;
       m_isMinimized = false;
       m_symbol = _Symbol;
@@ -540,6 +595,7 @@ public:
    void DrawOnChart() {
       DrawFVGOnChart();
       DrawOBOnChart();
+      ChartRedraw(0);
    }
 
    //+------------------------------------------------------------------+
@@ -550,6 +606,7 @@ public:
       ObjectsDeleteAll(0, m_prefix + "FVG_LBL_");
       ObjectsDeleteAll(0, m_prefix + "OB_ZONE_");
       ObjectsDeleteAll(0, m_prefix + "OB_LBL_");
+      ChartRedraw(0);
    }
 
    //+------------------------------------------------------------------+
@@ -562,21 +619,21 @@ public:
       int y = m_startY;
       int w = m_width;
 
-      // Clear content if minimized
+      // Delete content if minimized
       if(m_isMinimized) {
-         DeleteContentObjects();
+         DeleteAllContent();
       }
 
       // Main background
-      CreateRect("BG", x, y, w, m_isMinimized ? 24 : m_height, ICT_BG_MAIN, ICT_BG_HEADER);
+      CreateRect("BG", x, y, w, m_isMinimized ? 26 : m_height, ICT_BG_MAIN, ICT_BG_HEADER);
 
       // Title bar
-      CreateRect("TITLE_BG", x, y, w, 24, ICT_BG_HEADER, ICT_BG_HEADER);
-      CreateLabel("TITLE", "ICT Analysis - " + m_symbol, x + 8, y + 5, ICT_TEXT, 9, "Consolas Bold");
+      CreateRect("TITLE_BG", x, y, w, 26, ICT_BG_HEADER, ICT_BG_HEADER);
+      CreateLabel("TITLE", "ICT Analysis - " + m_symbol, x + 10, y + 6, ICT_TEXT, 9, "Consolas Bold");
 
       // Buttons
-      CreateButton("BTN_MIN", m_isMinimized ? "+" : "-", x + w - 25, y + 3, 20, 18, C'120,80,20', ICT_TEXT, 10);
-      CreateButton("BTN_DRAW", "Draw", x + w - 70, y + 3, 40, 18, C'100,70,20', ICT_TEXT, 7);
+      CreateButton("BTN_MIN", m_isMinimized ? "+" : "-", x + w - 25, y + 4, 20, 18, C'150,100,20', ICT_TEXT, 10);
+      CreateButton("BTN_DRAW", "Draw", x + w - 70, y + 4, 40, 18, C'120,80,20', ICT_TEXT, 7);
 
       if(m_isMinimized) {
          ChartRedraw(0);
@@ -585,47 +642,54 @@ public:
 
       int row = 0;
       int rowH = 18;
-      int startY = y + 28;
+      int startY = y + 30;
 
       // ===== SESSIONS SECTION =====
-      CreateLabel("LBL_SESS", "--- SESSIONS ---", x + 8, startY + row * rowH, ICT_WARNING, 8);
+      CreateLabel("SEC_SESS", "--- SESSIONS ---", x + 10, startY + row * rowH, ICT_WARNING, 8, "Consolas Bold");
       row++;
 
       for(int i = 0; i < 3; i++) {
          string status = m_sessions[i].isActive ? "ACTIVE" : "Closed";
-         string killzone = m_sessions[i].isKillZone ? " [KILL ZONE]" : "";
+         string killzone = m_sessions[i].isKillZone ? " [KILL ZONE]" : " Label";
 
          color statusColor = m_sessions[i].isActive ? ICT_POSITIVE : ICT_TEXT_DIM;
 
-         CreateRect("SESS_IND_" + IntegerToString(i), x + 8, startY + row * rowH + 4, 8, 8, m_sessions[i].sessionColor);
-         CreateLabel("SESS_" + IntegerToString(i), m_sessions[i].name + ": " + status,
-                     x + 22, startY + row * rowH + 2, statusColor, 8);
+         // Session indicator square
+         CreateRect("SESS_IND_" + IntegerToString(i), x + 10, startY + row * rowH + 4, 10, 10, m_sessions[i].sessionColor);
 
+         // Session text
+         CreateLabel("SESS_" + IntegerToString(i), m_sessions[i].name + ": " + status,
+                     x + 25, startY + row * rowH + 2, statusColor, 8);
+
+         // Kill zone indicator
          if(m_sessions[i].isKillZone) {
-            CreateLabel("KZ_" + IntegerToString(i), killzone, x + 130, startY + row * rowH + 2, ICT_KILLZONE, 8, "Consolas Bold");
+            CreateLabel("KZ_" + IntegerToString(i), "[KILL ZONE]", x + 140, startY + row * rowH + 2, ICT_KILLZONE, 8, "Consolas Bold");
+         } else {
+            CreateLabel("KZ_" + IntegerToString(i), "", x + 140, startY + row * rowH + 2, ICT_TEXT_DIM, 8);
          }
+
          row++;
       }
 
       row++;
 
       // ===== ICT PATTERNS =====
-      CreateLabel("LBL_PATT", "--- ICT PATTERNS ---", x + 8, startY + row * rowH, ICT_WARNING, 8);
+      CreateLabel("SEC_PATT", "--- ICT PATTERNS ---", x + 10, startY + row * rowH, ICT_WARNING, 8, "Consolas Bold");
       row++;
 
       // FVG Count
-      CreateLabel("LBL_FVG", "Fair Value Gaps:", x + 8, startY + row * rowH + 2, ICT_TEXT_DIM, 8);
+      CreateLabel("LBL_FVG", "Fair Value Gaps:", x + 10, startY + row * rowH + 2, ICT_TEXT_DIM, 8);
       color fvgColor = m_fvgCount > 0 ? ICT_POSITIVE : ICT_TEXT_DIM;
-      CreateLabel("VAL_FVG", IntegerToString(m_fvgCount) + " active", x + 130, startY + row * rowH + 2, fvgColor, 8);
+      CreateLabel("VAL_FVG", IntegerToString(m_fvgCount) + " active", x + 140, startY + row * rowH + 2, fvgColor, 8, "Consolas Bold");
       row++;
 
       // Order Blocks Count
-      CreateLabel("LBL_OB", "Order Blocks:", x + 8, startY + row * rowH + 2, ICT_TEXT_DIM, 8);
+      CreateLabel("LBL_OB", "Order Blocks:", x + 10, startY + row * rowH + 2, ICT_TEXT_DIM, 8);
       color obColor = m_obCount > 0 ? ICT_POSITIVE : ICT_TEXT_DIM;
-      CreateLabel("VAL_OB", IntegerToString(m_obCount) + " active", x + 130, startY + row * rowH + 2, obColor, 8);
+      CreateLabel("VAL_OB", IntegerToString(m_obCount) + " active", x + 140, startY + row * rowH + 2, obColor, 8, "Consolas Bold");
       row++;
 
-      // Signal
+      // ===== SIGNAL =====
       row++;
       string recommendation = GetRecommendation();
       color recColor = ICT_TEXT_DIM;
@@ -634,8 +698,8 @@ public:
       else if(StringFind(recommendation, "SELL") >= 0) recColor = ICT_NEGATIVE;
       else if(StringFind(recommendation, "WAIT") >= 0) recColor = ICT_WARNING;
 
-      CreateLabel("LBL_REC", "Signal:", x + 8, startY + row * rowH + 2, ICT_TEXT, 8);
-      CreateLabel("VAL_REC", recommendation, x + 60, startY + row * rowH + 2, recColor, 8, "Consolas Bold");
+      CreateLabel("LBL_SIG", "Signal:", x + 10, startY + row * rowH + 2, ICT_TEXT, 8);
+      CreateLabel("VAL_SIG", recommendation, x + 65, startY + row * rowH + 2, recColor, 8, "Consolas Bold");
 
       ChartRedraw(0);
    }
@@ -672,12 +736,12 @@ public:
          else bearSignals++;
       }
 
-      if(bullSignals > bearSignals && bullSignals >= 2) {
+      if(bullSignals > bearSignals && bullSignals >= 1) {
          return "BUY (" + activeSession + ")";
-      } else if(bearSignals > bullSignals && bearSignals >= 2) {
+      } else if(bearSignals > bullSignals && bearSignals >= 1) {
          return "SELL (" + activeSession + ")";
       } else if(bullSignals > 0 || bearSignals > 0) {
-         return "WAIT - Weak signal";
+         return "MIXED - Check zones";
       }
 
       return "WAIT - No pattern";
@@ -690,12 +754,18 @@ public:
       if(sparam == m_prefix + "BTN_MIN") {
          m_isMinimized = !m_isMinimized;
          ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+
+         if(m_isMinimized) {
+            DeleteAllContent();
+         }
+
          Draw();
          return true;
       }
 
       if(sparam == m_prefix + "BTN_DRAW") {
          ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+         Print("[ICT] Drawing zones on chart...");
          DrawOnChart();
          return true;
       }
