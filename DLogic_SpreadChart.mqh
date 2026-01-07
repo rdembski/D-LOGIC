@@ -8,19 +8,21 @@
 #property strict
 
 // ============================================================
-// COLOR SCHEME
+// COLOR SCHEME - BRIGHTER VERSION
 // ============================================================
-#define SPREAD_BG_MAIN     C'15,15,20'
-#define SPREAD_BG_HEADER   C'80,0,120'
-#define SPREAD_LINE_UP     C'0,230,118'
-#define SPREAD_LINE_DOWN   C'255,82,82'
-#define SPREAD_LINE_MEAN   C'255,193,7'
-#define SPREAD_LINE_STD1   C'0,150,200'
-#define SPREAD_LINE_STD2   C'150,100,255'
-#define SPREAD_BORDER      C'50,55,65'
-#define SPREAD_TEXT        C'220,220,225'
-#define SPREAD_TEXT_DIM    C'130,130,145'
-#define SPREAD_CYAN        C'0,229,255'
+#define SPREAD_BG_MAIN     C'25,28,35'
+#define SPREAD_BG_HEADER   C'120,50,180'
+#define SPREAD_BG_CHART    C'35,40,50'
+#define SPREAD_LINE_UP     C'0,255,150'
+#define SPREAD_LINE_DOWN   C'255,100,100'
+#define SPREAD_LINE_MEAN   C'255,220,50'
+#define SPREAD_LINE_STD1   C'100,200,255'
+#define SPREAD_LINE_STD2   C'200,150,255'
+#define SPREAD_BORDER      C'80,85,100'
+#define SPREAD_TEXT        C'240,240,245'
+#define SPREAD_TEXT_DIM    C'160,160,180'
+#define SPREAD_CYAN        C'50,255,255'
+#define SPREAD_GRID        C'50,55,65'
 
 //+------------------------------------------------------------------+
 //| Spread Chart Class                                                |
@@ -107,6 +109,21 @@ private:
    }
 
    //+------------------------------------------------------------------+
+   //| Delete all content objects (for minimize)                         |
+   //+------------------------------------------------------------------+
+   void DeleteContentObjects() {
+      // Delete everything except title bar elements
+      ObjectsDeleteAll(0, m_prefix + "CHART_");
+      ObjectsDeleteAll(0, m_prefix + "PT_");
+      ObjectsDeleteAll(0, m_prefix + "MEAN_");
+      ObjectsDeleteAll(0, m_prefix + "STATS");
+      ObjectsDeleteAll(0, m_prefix + "SIGNAL");
+      ObjectsDeleteAll(0, m_prefix + "FOOTER");
+      ObjectsDeleteAll(0, m_prefix + "LBL_STD");
+      ObjectsDeleteAll(0, m_prefix + "LBL_MEAN");
+   }
+
+   //+------------------------------------------------------------------+
    //| Calculate spread values                                           |
    //+------------------------------------------------------------------+
    void CalculateSpread(ENUM_TIMEFRAMES tf) {
@@ -165,13 +182,15 @@ private:
    //| Draw spread line chart                                            |
    //+------------------------------------------------------------------+
    void DrawSpreadLine() {
-      int chartX = m_startX + 5;
-      int chartY = m_startY + 50;
-      int chartW = m_width - 10;
-      int chartH = m_height - 100;
+      int chartX = m_startX + 8;
+      int chartY = m_startY + 48;
+      int chartW = m_width - 45;
+      int chartH = m_height - 75;
 
-      // Chart background
-      CreateRect("CHART_BG", chartX, chartY, chartW, chartH, C'20,22,28');
+      // Chart background - brighter
+      CreateRect("CHART_BG", chartX, chartY, chartW, chartH, SPREAD_BG_CHART, SPREAD_GRID);
+
+      if(ArraySize(m_spreadValues) < 10) return;
 
       // Find min/max for scaling
       double minVal = m_spreadMean - 3 * m_spreadStd;
@@ -185,28 +204,29 @@ private:
       double range = maxVal - minVal;
       if(range < 1e-10) range = 1;
 
-      // Draw standard deviation bands
+      // Calculate Y positions for levels
       int meanY = chartY + chartH - (int)((m_spreadMean - minVal) / range * chartH);
       int std1UpY = chartY + chartH - (int)((m_spreadMean + m_spreadStd - minVal) / range * chartH);
       int std1DnY = chartY + chartH - (int)((m_spreadMean - m_spreadStd - minVal) / range * chartH);
       int std2UpY = chartY + chartH - (int)((m_spreadMean + 2 * m_spreadStd - minVal) / range * chartH);
       int std2DnY = chartY + chartH - (int)((m_spreadMean - 2 * m_spreadStd - minVal) / range * chartH);
 
-      // Mean line
-      string meanLine = m_prefix + "MEAN_LINE";
-      if(ObjectFind(0, meanLine) < 0) {
-         ObjectCreate(0, meanLine, OBJ_RECTANGLE_LABEL, 0, 0, 0);
-      }
-      ObjectSetInteger(0, meanLine, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, meanLine, OBJPROP_XDISTANCE, chartX);
-      ObjectSetInteger(0, meanLine, OBJPROP_YDISTANCE, meanY);
-      ObjectSetInteger(0, meanLine, OBJPROP_XSIZE, chartW);
-      ObjectSetInteger(0, meanLine, OBJPROP_YSIZE, 1);
-      ObjectSetInteger(0, meanLine, OBJPROP_BGCOLOR, SPREAD_LINE_MEAN);
-      ObjectSetInteger(0, meanLine, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+      // Clamp Y values
+      meanY = MathMax(chartY, MathMin(chartY + chartH - 1, meanY));
+      std1UpY = MathMax(chartY, MathMin(chartY + chartH - 1, std1UpY));
+      std1DnY = MathMax(chartY, MathMin(chartY + chartH - 1, std1DnY));
+      std2UpY = MathMax(chartY, MathMin(chartY + chartH - 1, std2UpY));
+      std2DnY = MathMax(chartY, MathMin(chartY + chartH - 1, std2DnY));
 
-      // Draw spread points as small rectangles
-      int pointW = MathMax(1, chartW / m_lookback);
+      // Draw horizontal level lines
+      CreateRect("MEAN_LINE", chartX, meanY, chartW, 2, SPREAD_LINE_MEAN);
+      CreateRect("CHART_STD1U", chartX, std1UpY, chartW, 1, SPREAD_LINE_STD1);
+      CreateRect("CHART_STD1D", chartX, std1DnY, chartW, 1, SPREAD_LINE_STD1);
+      CreateRect("CHART_STD2U", chartX, std2UpY, chartW, 1, SPREAD_LINE_STD2);
+      CreateRect("CHART_STD2D", chartX, std2DnY, chartW, 1, SPREAD_LINE_STD2);
+
+      // Draw spread points
+      int pointW = MathMax(2, chartW / m_lookback);
       int displayPoints = MathMin(m_lookback, chartW / pointW);
 
       for(int i = 0; i < displayPoints; i++) {
@@ -218,7 +238,7 @@ private:
 
          // Clamp to chart bounds
          if(pointY < chartY) pointY = chartY;
-         if(pointY > chartY + chartH - 2) pointY = chartY + chartH - 2;
+         if(pointY > chartY + chartH - 3) pointY = chartY + chartH - 3;
 
          string pointName = m_prefix + "PT_" + IntegerToString(i);
 
@@ -228,30 +248,33 @@ private:
          ObjectSetInteger(0, pointName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
          ObjectSetInteger(0, pointName, OBJPROP_XDISTANCE, pointX);
          ObjectSetInteger(0, pointName, OBJPROP_YDISTANCE, pointY);
-         ObjectSetInteger(0, pointName, OBJPROP_XSIZE, MathMax(2, pointW - 1));
-         ObjectSetInteger(0, pointName, OBJPROP_YSIZE, 3);
+         ObjectSetInteger(0, pointName, OBJPROP_XSIZE, MathMax(3, pointW - 1));
+         ObjectSetInteger(0, pointName, OBJPROP_YSIZE, 4);
 
-         // Color based on position relative to mean
+         // Color based on position relative to mean - BRIGHTER
          color pointColor;
          if(m_spreadValues[idx] > m_spreadMean + m_spreadStd) {
-            pointColor = SPREAD_LINE_DOWN;  // Overbought
+            pointColor = SPREAD_LINE_DOWN;  // Overbought - red
          } else if(m_spreadValues[idx] < m_spreadMean - m_spreadStd) {
-            pointColor = SPREAD_LINE_UP;    // Oversold
+            pointColor = SPREAD_LINE_UP;    // Oversold - green
          } else {
-            pointColor = SPREAD_CYAN;       // Normal
+            pointColor = SPREAD_CYAN;       // Normal - cyan
          }
 
          ObjectSetInteger(0, pointName, OBJPROP_BGCOLOR, pointColor);
          ObjectSetInteger(0, pointName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
          ObjectSetInteger(0, pointName, OBJPROP_BORDER_COLOR, pointColor);
+         ObjectSetInteger(0, pointName, OBJPROP_SELECTABLE, false);
+         ObjectSetInteger(0, pointName, OBJPROP_HIDDEN, true);
       }
 
-      // Labels for std levels
-      CreateLabel("LBL_STD2U", "+2\317\203", chartX + chartW + 3, std2UpY - 5, SPREAD_LINE_STD2, 7);
-      CreateLabel("LBL_STD1U", "+1\317\203", chartX + chartW + 3, std1UpY - 5, SPREAD_LINE_STD1, 7);
-      CreateLabel("LBL_MEAN", "Mean", chartX + chartW + 3, meanY - 5, SPREAD_LINE_MEAN, 7);
-      CreateLabel("LBL_STD1D", "-1\317\203", chartX + chartW + 3, std1DnY - 5, SPREAD_LINE_STD1, 7);
-      CreateLabel("LBL_STD2D", "-2\317\203", chartX + chartW + 3, std2DnY - 5, SPREAD_LINE_STD2, 7);
+      // Labels for std levels - positioned outside chart
+      int labelX = chartX + chartW + 3;
+      CreateLabel("LBL_STD2U", "+2s", labelX, std2UpY - 5, SPREAD_LINE_STD2, 7);
+      CreateLabel("LBL_STD1U", "+1s", labelX, std1UpY - 5, SPREAD_LINE_STD1, 7);
+      CreateLabel("LBL_MEAN", "Mean", labelX, meanY - 5, SPREAD_LINE_MEAN, 7);
+      CreateLabel("LBL_STD1D", "-1s", labelX, std1DnY - 5, SPREAD_LINE_STD1, 7);
+      CreateLabel("LBL_STD2D", "-2s", labelX, std2DnY - 5, SPREAD_LINE_STD2, 7);
    }
 
 public:
@@ -262,8 +285,8 @@ public:
       m_prefix = "DL_SPREAD_";
       m_startX = 10;
       m_startY = 400;
-      m_width = 350;
-      m_height = 200;
+      m_width = 280;
+      m_height = 180;
       m_isVisible = true;
       m_isMinimized = false;
       m_symbol1 = "";
@@ -319,18 +342,23 @@ public:
       int y = m_startY;
       int w = m_width;
 
+      // Clear content if minimized
+      if(m_isMinimized) {
+         DeleteContentObjects();
+      }
+
       // Main background
-      CreateRect("BG", x, y, w, m_isMinimized ? 24 : m_height, SPREAD_BG_MAIN, C'150,50,200');
+      CreateRect("BG", x, y, w, m_isMinimized ? 24 : m_height, SPREAD_BG_MAIN, SPREAD_BG_HEADER);
 
       // Title bar
-      CreateRect("TITLE_BG", x, y, w, 24, SPREAD_BG_HEADER, C'150,50,200');
+      CreateRect("TITLE_BG", x, y, w, 24, SPREAD_BG_HEADER, SPREAD_BG_HEADER);
 
       string title = "Spread: " + m_symbol1 + " / " + m_symbol2;
-      if(m_symbol1 == "") title = "Spread Chart - Select Pair";
+      if(m_symbol1 == "") title = "Spread Chart";
       CreateLabel("TITLE", title, x + 8, y + 5, SPREAD_TEXT, 9, "Consolas Bold");
 
       // Minimize button
-      CreateButton("BTN_MIN", m_isMinimized ? "+" : "-", x + w - 25, y + 3, 20, 18, C'60,65,75', SPREAD_TEXT, 10);
+      CreateButton("BTN_MIN", m_isMinimized ? "+" : "-", x + w - 25, y + 3, 20, 18, C'80,50,120', SPREAD_TEXT, 10);
 
       if(m_isMinimized) {
          ChartRedraw(0);
@@ -338,10 +366,10 @@ public:
       }
 
       // Stats row
-      int statsY = y + 28;
+      int statsY = y + 27;
       string statsText = "Z: " + DoubleToString(m_currentZScore, 2) +
-                        " | HR: " + DoubleToString(m_hedgeRatio, 4) +
-                        " | \317\203: " + DoubleToString(m_spreadStd, 6);
+                        " | HR: " + DoubleToString(m_hedgeRatio, 3) +
+                        " | Std: " + DoubleToString(m_spreadStd, 5);
       CreateLabel("STATS", statsText, x + 8, statsY, SPREAD_TEXT_DIM, 7);
 
       // Signal indicator
@@ -357,19 +385,21 @@ public:
       } else if(MathAbs(m_currentZScore) < 0.5) {
          signal = "NEUTRAL";
          sigColor = SPREAD_LINE_MEAN;
+      } else {
+         signal = "WAIT";
+         sigColor = SPREAD_TEXT_DIM;
       }
 
-      CreateLabel("SIGNAL", signal, x + w - 90, statsY, sigColor, 8, "Consolas Bold");
+      CreateLabel("SIGNAL", signal, x + w - 85, statsY, sigColor, 8, "Consolas Bold");
 
       // Draw spread line chart
-      if(m_symbol1 != "" && m_symbol2 != "") {
+      if(m_symbol1 != "" && m_symbol2 != "" && ArraySize(m_spreadValues) > 0) {
          DrawSpreadLine();
       }
 
-      // Footer with interpretation
-      int footerY = y + m_height - 20;
-      string footerText = "Green=Oversold | Yellow=Mean | Red=Overbought";
-      CreateLabel("FOOTER", footerText, x + 8, footerY, SPREAD_TEXT_DIM, 7);
+      // Footer
+      int footerY = y + m_height - 18;
+      CreateLabel("FOOTER", "Green=Buy | Yellow=Mean | Red=Sell", x + 8, footerY, SPREAD_TEXT_DIM, 7);
 
       ChartRedraw(0);
    }
@@ -395,6 +425,7 @@ public:
       if(!m_isVisible) {
          ObjectsDeleteAll(0, m_prefix);
       } else {
+         m_isMinimized = false;
          Draw();
       }
    }
