@@ -37,6 +37,13 @@ struct SPairResult {
    double   halfLife;          // Estimated half-life of mean reversion
    bool     isCointegrated;    // Passes cointegration test?
 
+   // Advanced Analytics (NEW)
+   double   hurstExponent;     // Hurst Exponent: <0.5=mean reverting, >0.5=trending
+   double   volatilityRatio;   // Current vol / Historical vol (regime indicator)
+   double   kellyFraction;     // Optimal position size (Kelly Criterion)
+   double   expectedReturn;    // Expected return based on Z-Score mean reversion
+   int      qualityScore;      // Overall pair quality (0-100)
+
    // Signal
    int      signal;            // -2=Strong Short, -1=Weak Short, 0=Neutral, 1=Weak Long, 2=Strong Long
    string   signalText;        // Human readable signal
@@ -299,6 +306,204 @@ private:
    }
 
    //+------------------------------------------------------------------+
+   //| Calculate Hurst Exponent (Rescaled Range Method)                   |
+   //| H < 0.5 = Mean Reverting (ideal for pairs trading)                |
+   //| H = 0.5 = Random Walk                                              |
+   //| H > 0.5 = Trending (avoid for pairs trading)                       |
+   //+------------------------------------------------------------------+
+   double CalculateHurstExponent(double &series[]) {
+      int size = ArraySize(series);
+      if(size < 20) return 0.5;  // Default to random walk
+
+      // Use multiple sub-periods for R/S calculation
+      int minPeriod = 10;
+      int maxPeriod = size / 2;
+
+      double logN[], logRS[];
+      int validPoints = 0;
+
+      // Calculate R/S for different period lengths
+      for(int n = minPeriod; n <= maxPeriod; n += 5) {
+         int numPeriods = size / n;
+         if(numPeriods < 1) continue;
+
+         double sumRS = 0;
+         int countRS = 0;
+
+         for(int p = 0; p < numPeriods; p++) {
+            int startIdx = p * n;
+            if(startIdx + n > size) break;
+
+            // Calculate mean of this sub-period
+            double subMean = 0;
+            for(int i = 0; i < n; i++) {
+               subMean += series[startIdx + i];
+            }
+            subMean /= n;
+
+            // Calculate cumulative deviation from mean
+            double cumDev = 0;
+            double minCumDev = 0;
+            double maxCumDev = 0;
+
+            for(int i = 0; i < n; i++) {
+               cumDev += (series[startIdx + i] - subMean);
+               if(cumDev < minCumDev) minCumDev = cumDev;
+               if(cumDev > maxCumDev) maxCumDev = cumDev;
+            }
+
+            double range = maxCumDev - minCumDev;
+
+            // Calculate standard deviation
+            double sumSq = 0;
+            for(int i = 0; i < n; i++) {
+               sumSq += MathPow(series[startIdx + i] - subMean, 2);
+            }
+            double stdDev = MathSqrt(sumSq / n);
+
+            if(stdDev > 1e-10) {
+               sumRS += range / stdDev;
+               countRS++;
+            }
+         }
+
+         if(countRS > 0) {
+            ArrayResize(logN, validPoints + 1);
+            ArrayResize(logRS, validPoints + 1);
+            logN[validPoints] = MathLog((double)n);
+            logRS[validPoints] = MathLog(sumRS / countRS);
+            validPoints++;
+         }
+      }
+
+      // Linear regression of log(R/S) on log(n) to get Hurst exponent
+      if(validPoints < 3) return 0.5;
+
+      double sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+      for(int i = 0; i < validPoints; i++) {
+         sumX += logN[i];
+         sumY += logRS[i];
+         sumXY += logN[i] * logRS[i];
+         sumX2 += logN[i] * logN[i];
+      }
+
+      double denom = validPoints * sumX2 - sumX * sumX;
+      if(MathAbs(denom) < 1e-10) return 0.5;
+
+      double hurst = (validPoints * sumXY - sumX * sumY) / denom;
+
+      // Clamp to reasonable range [0, 1]
+      return MathMax(0.0, MathMin(1.0, hurst));
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Volatility Ratio (Current / Historical)                  |
+   //| >1 = High volatility regime, <1 = Low volatility regime            |
+   //+------------------------------------------------------------------+
+   double CalculateVolatilityRatio(double &series[]) {
+      int size = ArraySize(series);
+      if(size < 50) return 1.0;
+
+      // Recent volatility (last 20 bars)
+      int recentPeriod = 20;
+      double recentSum = 0, recentSumSq = 0;
+      for(int i = 0; i < recentPeriod; i++) {
+         recentSum += series[i];
+      }
+      double recentMean = recentSum / recentPeriod;
+      for(int i = 0; i < recentPeriod; i++) {
+         recentSumSq += MathPow(series[i] - recentMean, 2);
+      }
+      double recentVol = MathSqrt(recentSumSq / recentPeriod);
+
+      // Historical volatility (full period)
+      double histSum = 0, histSumSq = 0;
+      for(int i = 0; i < size; i++) {
+         histSum += series[i];
+      }
+      double histMean = histSum / size;
+      for(int i = 0; i < size; i++) {
+         histSumSq += MathPow(series[i] - histMean, 2);
+      }
+      double histVol = MathSqrt(histSumSq / size);
+
+      if(histVol < 1e-10) return 1.0;
+      return recentVol / histVol;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Kelly Fraction for Optimal Position Sizing               |
+   //| Kelly = (p * W - q) / W                                            |
+   //| Where: p = win probability, q = 1-p, W = avg win/avg loss          |
+   //+------------------------------------------------------------------+
+   double CalculateKellyFraction(double winRate, double avgWinLossRatio) {
+      double p = winRate / 100.0;  // Win probability
+      double q = 1.0 - p;          // Loss probability
+
+      if(avgWinLossRatio <= 0 || p <= 0) return 0;
+
+      double kelly = (p * avgWinLossRatio - q) / avgWinLossRatio;
+
+      // Apply half-Kelly for safety
+      kelly *= 0.5;
+
+      // Clamp to reasonable range [0, 0.25]
+      return MathMax(0.0, MathMin(0.25, kelly));
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Expected Return for Mean Reversion Trade                 |
+   //| Based on Z-Score reverting to mean                                 |
+   //+------------------------------------------------------------------+
+   double CalculateExpectedReturn(double zScore, double halfLife, double spreadStdDev) {
+      if(halfLife <= 0 || halfLife > 100) return 0;
+
+      // Expected move = current Z-Score deviation * probability of reversion
+      // Assume reversion to Z=0 with exponential decay
+      double reversionProb = 1.0 - MathExp(-MathLog(2) / halfLife);  // Prob of 50% reversion in halfLife bars
+
+      // Expected Z-Score change
+      double expectedZChange = MathAbs(zScore) * reversionProb;
+
+      // Convert to price move (approximate)
+      double expectedMove = expectedZChange * spreadStdDev;
+
+      return expectedMove;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Overall Pair Quality Score (0-100)                       |
+   //+------------------------------------------------------------------+
+   int CalculateQualityScore(SPairResult &result) {
+      int score = 0;
+
+      // Cointegration (30 points)
+      if(result.isCointegrated) score += 30;
+
+      // R² (20 points)
+      score += (int)(result.rSquared * 20);
+
+      // Hurst Exponent (20 points) - lower is better for mean reversion
+      if(result.hurstExponent < 0.4) score += 20;
+      else if(result.hurstExponent < 0.5) score += 15;
+      else if(result.hurstExponent < 0.55) score += 5;
+
+      // Half-Life (15 points) - optimal is 5-30 bars
+      if(result.halfLife >= 5 && result.halfLife <= 30) score += 15;
+      else if(result.halfLife > 0 && result.halfLife <= 50) score += 8;
+
+      // Zero Crossings (10 points)
+      if(result.zeroCrossings >= 15) score += 10;
+      else if(result.zeroCrossings >= 10) score += 7;
+      else if(result.zeroCrossings >= 5) score += 3;
+
+      // Volatility Ratio penalty (5 points) - prefer normal volatility
+      if(result.volatilityRatio >= 0.7 && result.volatilityRatio <= 1.5) score += 5;
+
+      return MathMin(100, score);
+   }
+
+   //+------------------------------------------------------------------+
    //| Generate Trading Signal                                           |
    //+------------------------------------------------------------------+
    void GenerateSignal(SPairResult &result) {
@@ -415,7 +620,20 @@ public:
                                result.rSquared >= m_minRSquared &&
                                result.halfLife < 50);
 
-      // Step 7: Generate Signal
+      // Step 7: Advanced Analytics
+      result.hurstExponent = CalculateHurstExponent(m_spreadSeries);
+      result.volatilityRatio = CalculateVolatilityRatio(m_spreadSeries);
+      result.expectedReturn = CalculateExpectedReturn(result.zScore, result.halfLife, result.spreadStdDev);
+
+      // Kelly Fraction (assumes 60% win rate and 1.5:1 reward/risk as baseline for pairs trading)
+      double assumedWinRate = result.isCointegrated ? 60.0 : 50.0;
+      double assumedRatio = result.isCointegrated ? 1.5 : 1.0;
+      result.kellyFraction = CalculateKellyFraction(assumedWinRate, assumedRatio);
+
+      // Quality Score
+      result.qualityScore = CalculateQualityScore(result);
+
+      // Step 8: Generate Signal
       GenerateSignal(result);
 
       return true;

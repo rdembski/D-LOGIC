@@ -48,7 +48,7 @@
 
 // Main container (expanded for new features)
 #define MAIN_WIDTH         1150
-#define MAIN_HEIGHT        720
+#define MAIN_HEIGHT        870
 
 // TOP PANEL (Scanner)
 #define TOP_PANEL_HEIGHT   300
@@ -555,30 +555,29 @@ private:
          if(idx < 0) break;
 
          string rowPrefix = "HIST_R" + IntegerToString(i);
-         SSignalHistory &sig = m_signalHistory[idx];
 
          // Time (HH:MM)
-         string timeStr = TimeToString(sig.time, TIME_MINUTES);
+         string timeStr = TimeToString(m_signalHistory[idx].time, TIME_MINUTES);
          CreateLabel(rowPrefix + "_T", timeStr, x + 10, rowY + i * rowH, CLR_TEXT_DIM, 7);
 
          // Pair name
-         CreateLabel(rowPrefix + "_P", sig.pairName, x + 65, rowY + i * rowH, CLR_TEXT_BRIGHT, 7);
+         CreateLabel(rowPrefix + "_P", m_signalHistory[idx].pairName, x + 65, rowY + i * rowH, CLR_TEXT_BRIGHT, 7);
 
          // Signal
          string sigText = "";
          color sigColor = CLR_TEXT_DIM;
-         if(sig.signal == 2) { sigText = "STRONG LONG"; sigColor = CLR_NEON_GREEN; }
-         else if(sig.signal == 1) { sigText = "LONG"; sigColor = CLR_NEON_CYAN; }
-         else if(sig.signal == -1) { sigText = "SHORT"; sigColor = CLR_NEON_ORANGE; }
-         else if(sig.signal == -2) { sigText = "STRONG SHORT"; sigColor = CLR_NEON_RED; }
+         if(m_signalHistory[idx].signal == 2) { sigText = "STRONG LONG"; sigColor = CLR_NEON_GREEN; }
+         else if(m_signalHistory[idx].signal == 1) { sigText = "LONG"; sigColor = CLR_NEON_CYAN; }
+         else if(m_signalHistory[idx].signal == -1) { sigText = "SHORT"; sigColor = CLR_NEON_ORANGE; }
+         else if(m_signalHistory[idx].signal == -2) { sigText = "STRONG SHORT"; sigColor = CLR_NEON_RED; }
          CreateLabel(rowPrefix + "_S", sigText, x + 180, rowY + i * rowH, sigColor, 6);
 
          // Z-Score
-         CreateLabel(rowPrefix + "_Z", DoubleToString(sig.zScore, 1), x + 240, rowY + i * rowH, GetZScoreColor(sig.zScore), 7);
+         CreateLabel(rowPrefix + "_Z", DoubleToString(m_signalHistory[idx].zScore, 1), x + 240, rowY + i * rowH, GetZScoreColor(m_signalHistory[idx].zScore), 7);
 
          // Executed indicator
-         string execText = sig.executed ? "✓" : "○";
-         color execColor = sig.executed ? CLR_NEON_GREEN : CLR_TEXT_MUTED;
+         string execText = m_signalHistory[idx].executed ? "✓" : "○";
+         color execColor = m_signalHistory[idx].executed ? CLR_NEON_GREEN : CLR_TEXT_MUTED;
          CreateLabel(rowPrefix + "_E", execText, x + 285, rowY + i * rowH, execColor, 8);
       }
    }
@@ -588,7 +587,7 @@ private:
    //+------------------------------------------------------------------+
    void DrawTitleBar(int x, int y, int w) {
       CreateRect("TITLE_BG", x, y, w, 30, CLR_BG_HEADER, CLR_NEON_CYAN);
-      CreateLabel("TITLE", "D-LOGIC QUANT DASHBOARD v4.00", x + 12, y + 7, CLR_TEXT_BRIGHT, 11, "Consolas Bold");
+      CreateLabel("TITLE", "D-LOGIC QUANT DASHBOARD v4.10", x + 12, y + 7, CLR_TEXT_BRIGHT, 11, "Consolas Bold");
       CreateLabel("SUBTITLE", "Statistical Arbitrage Engine", x + 320, y + 9, CLR_NEON_CYAN, 9);
 
       // System status indicator
@@ -617,14 +616,16 @@ private:
       int headerY = y + 28;
       CreateRect("SCN_HDR", x, headerY, w, 20, CLR_BG_MAIN, CLR_BORDER);
 
-      int cols[] = {8, 150, 195, 260, 315, 380, 480};
+      int cols[] = {8, 150, 195, 260, 315, 365, 420, 520, 620};
       CreateLabel("H_COINT", "●", x + cols[0], headerY + 3, CLR_TEXT_DIM, 8);
       CreateLabel("H_PAIR", "PAIR", x + cols[1] - 130, headerY + 3, CLR_TEXT_DIM, 8, "Consolas Bold");
       CreateLabel("H_TF", "TF", x + cols[2] - 130, headerY + 3, CLR_TEXT_DIM, 8, "Consolas Bold");
       CreateLabel("H_ZSCORE", "Z-SCORE", x + cols[3] - 130, headerY + 3, CLR_TEXT_DIM, 8, "Consolas Bold");
       CreateLabel("H_R2", "R²", x + cols[4] - 130, headerY + 3, CLR_TEXT_DIM, 8, "Consolas Bold");
       CreateLabel("H_HALF", "HL", x + cols[5] - 130, headerY + 3, CLR_TEXT_DIM, 8, "Consolas Bold");
-      CreateLabel("H_SIGNAL", "SIGNAL", x + cols[6] - 130, headerY + 3, CLR_TEXT_DIM, 8, "Consolas Bold");
+      CreateLabel("H_HURST", "H", x + cols[6] - 130, headerY + 3, CLR_TEXT_DIM, 8, "Consolas Bold");
+      CreateLabel("H_QUAL", "QUALITY", x + cols[7] - 130, headerY + 3, CLR_TEXT_DIM, 8, "Consolas Bold");
+      CreateLabel("H_SIGNAL", "SIGNAL", x + cols[8] - 130, headerY + 3, CLR_TEXT_DIM, 8, "Consolas Bold");
 
       // Draw rows
       int rowY = headerY + 22;
@@ -692,11 +693,21 @@ private:
       color hlColor = result.halfLife < 20 ? CLR_NEON_GREEN : (result.halfLife < 50 ? CLR_NEON_YELLOW : CLR_TEXT_DIM);
       CreateLabel(rowName + "_HL", hlText, baseX + cols[5] - 130, y + 2, hlColor, 8);
 
+      // Hurst Exponent
+      color hurstColor = result.hurstExponent < 0.45 ? CLR_NEON_GREEN :
+                        (result.hurstExponent < 0.55 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel(rowName + "_HU", DoubleToString(result.hurstExponent, 2), baseX + cols[6] - 130, y + 2, hurstColor, 8);
+
+      // Quality Score
+      color qualColor = result.qualityScore >= 70 ? CLR_NEON_GREEN :
+                       (result.qualityScore >= 50 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel(rowName + "_QS", IntegerToString(result.qualityScore), baseX + cols[7] - 130, y + 2, qualColor, 8, "Consolas Bold");
+
       // Signal
       color sigColor = CLR_TEXT_DIM;
       if(MathAbs(result.signal) == 2) sigColor = (result.signal > 0) ? CLR_NEON_GREEN : CLR_NEON_RED;
       else if(MathAbs(result.signal) == 1) sigColor = CLR_NEON_YELLOW;
-      CreateLabel(rowName + "_SIG", result.signalText, baseX + cols[6] - 130, y + 2, sigColor, 7);
+      CreateLabel(rowName + "_SIG", result.signalText, baseX + cols[8] - 130, y + 2, sigColor, 7);
    }
 
    //+------------------------------------------------------------------+
@@ -1015,6 +1026,81 @@ private:
    }
 
    //+------------------------------------------------------------------+
+   //| Draw Advanced Analytics Panel                                      |
+   //+------------------------------------------------------------------+
+   void DrawAdvancedAnalytics(int x, int y, int w, SPairResult &result) {
+      int h = 130;
+      CreateRect("ADV_BG", x, y, w, h, CLR_BG_MAIN, CLR_BORDER_ACCENT);
+      CreateLabel("ADV_TITLE", "ADVANCED ANALYTICS", x + 10, y + 6, CLR_NEON_MAGENTA, 9, "Consolas Bold");
+
+      int row = 0;
+      int rowH = 16;
+      int startY = y + 26;
+      int valX = x + 140;
+
+      // Hurst Exponent
+      color hurstColor = result.hurstExponent < 0.45 ? CLR_NEON_GREEN :
+                        (result.hurstExponent < 0.55 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      string hurstText = result.hurstExponent < 0.45 ? "MEAN REVERT" :
+                        (result.hurstExponent < 0.55 ? "RANDOM" : "TRENDING");
+      CreateLabel("ADV_H_L", "Hurst Exponent:", x + 10, startY + row * rowH, CLR_TEXT_DIM, 7);
+      CreateLabel("ADV_H_V", DoubleToString(result.hurstExponent, 3) + " (" + hurstText + ")", valX, startY + row * rowH, hurstColor, 7, "Consolas Bold");
+      row++;
+
+      // Volatility Ratio
+      color volColor = (result.volatilityRatio >= 0.7 && result.volatilityRatio <= 1.3) ? CLR_NEON_GREEN :
+                       (result.volatilityRatio <= 1.8 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      string volText = result.volatilityRatio < 0.7 ? "LOW VOL" :
+                      (result.volatilityRatio > 1.5 ? "HIGH VOL" : "NORMAL");
+      CreateLabel("ADV_V_L", "Vol Ratio:", x + 10, startY + row * rowH, CLR_TEXT_DIM, 7);
+      CreateLabel("ADV_V_V", DoubleToString(result.volatilityRatio, 2) + "x (" + volText + ")", valX, startY + row * rowH, volColor, 7, "Consolas Bold");
+      row++;
+
+      // Quality Score
+      color qualColor = result.qualityScore >= 70 ? CLR_NEON_GREEN :
+                       (result.qualityScore >= 50 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      string qualText = result.qualityScore >= 70 ? "EXCELLENT" :
+                       (result.qualityScore >= 50 ? "GOOD" : "POOR");
+      CreateLabel("ADV_Q_L", "Quality Score:", x + 10, startY + row * rowH, CLR_TEXT_DIM, 7);
+      CreateLabel("ADV_Q_V", IntegerToString(result.qualityScore) + "/100 (" + qualText + ")", valX, startY + row * rowH, qualColor, 7, "Consolas Bold");
+      row++;
+
+      // Kelly Fraction
+      CreateLabel("ADV_K_L", "Kelly Fraction:", x + 10, startY + row * rowH, CLR_TEXT_DIM, 7);
+      CreateLabel("ADV_K_V", DoubleToString(result.kellyFraction * 100, 1) + "% of capital", valX, startY + row * rowH, CLR_NEON_CYAN, 7, "Consolas Bold");
+      row++;
+
+      // Expected Return
+      CreateLabel("ADV_E_L", "Exp. Return:", x + 10, startY + row * rowH, CLR_TEXT_DIM, 7);
+      CreateLabel("ADV_E_V", DoubleToString(result.expectedReturn * 10000, 2) + " pips", valX, startY + row * rowH, CLR_NEON_CYAN, 7, "Consolas Bold");
+      row++;
+
+      // Trade Recommendation
+      row++;
+      string recText = "";
+      color recColor = CLR_TEXT_DIM;
+
+      if(result.qualityScore >= 70 && MathAbs(result.zScore) >= 2.0 && result.hurstExponent < 0.5) {
+         recText = "★★★ STRONG " + (result.zScore > 0 ? "SHORT" : "LONG") + " SIGNAL";
+         recColor = result.zScore > 0 ? CLR_NEON_RED : CLR_NEON_GREEN;
+      }
+      else if(result.qualityScore >= 50 && MathAbs(result.zScore) >= 1.5) {
+         recText = "★★ MODERATE " + (result.zScore > 0 ? "SHORT" : "LONG") + " SIGNAL";
+         recColor = CLR_NEON_YELLOW;
+      }
+      else if(result.hurstExponent > 0.55) {
+         recText = "⚠ AVOID - Trending Market";
+         recColor = CLR_NEON_RED;
+      }
+      else {
+         recText = "○ WAIT - No Clear Signal";
+         recColor = CLR_TEXT_DIM;
+      }
+
+      CreateLabel("ADV_REC", recText, x + 10, startY + row * rowH, recColor, 8, "Consolas Bold");
+   }
+
+   //+------------------------------------------------------------------+
    //| DRAW: BOTTOM PANEL - Charts & Controls                            |
    //+------------------------------------------------------------------+
    void DrawBottomPanel(int x, int y, SPairResult &result) {
@@ -1292,11 +1378,16 @@ public:
       // BOTTOM PANEL - Charts & Controls
       DrawBottomPanel(x + 5, y + BOTTOM_PANEL_Y, displayResult);
 
-      // PERFORMANCE PANEL - Under Spread Chart
-      DrawPerformancePanel(x + 5, y + BOTTOM_PANEL_Y + SPREAD_CHART_H + CONTROL_HEIGHT + 10, PERF_PANEL_W);
+      // ADVANCED ANALYTICS PANEL - Under Spread Chart (left side)
+      int analyticsPanelY = y + BOTTOM_PANEL_Y + SPREAD_CHART_H + 5;
+      DrawAdvancedAnalytics(x + 5, analyticsPanelY, SPREAD_CHART_W, displayResult);
+
+      // PERFORMANCE PANEL - Under Advanced Analytics
+      int perfPanelY = analyticsPanelY + 140;
+      DrawPerformancePanel(x + 5, perfPanelY, PERF_PANEL_W);
 
       // SIGNAL HISTORY PANEL - Next to Performance
-      DrawSignalHistoryPanel(x + 5 + PERF_PANEL_W + 10, y + BOTTOM_PANEL_Y + SPREAD_CHART_H + CONTROL_HEIGHT + 10, SIGNAL_LOG_W);
+      DrawSignalHistoryPanel(x + 5 + PERF_PANEL_W + 10, perfPanelY, SIGNAL_LOG_W);
 
       // Process alerts
       ProcessAlerts();
