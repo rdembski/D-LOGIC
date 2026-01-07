@@ -44,6 +44,13 @@ struct SPairResult {
    double   expectedReturn;    // Expected return based on Z-Score mean reversion
    int      qualityScore;      // Overall pair quality (0-100)
 
+   // Correlation & Stability Analytics
+   double   priceCorrelation;  // Pearson correlation between price series
+   double   varianceRatio;     // Lo-MacKinlay VR test (<1=mean revert, >1=trending)
+   double   autocorrelation;   // Lag-1 autocorrelation of spread
+   double   spreadStability;   // Stability index (0-100)
+   double   optimalEntryZ;     // Optimized entry Z-Score
+
    // Signal
    int      signal;            // -2=Strong Short, -1=Weak Short, 0=Neutral, 1=Weak Long, 2=Strong Long
    string   signalText;        // Human readable signal
@@ -633,7 +640,14 @@ public:
       // Quality Score
       result.qualityScore = CalculateQualityScore(result);
 
-      // Step 8: Generate Signal
+      // Step 8: Correlation & Stability Analytics
+      result.priceCorrelation = CalculateCorrelation(m_logPricesA, m_logPricesB);
+      result.varianceRatio = CalculateVarianceRatio(m_spreadSeries, 2);
+      result.autocorrelation = CalculateAutocorrelation(m_spreadSeries, 1);
+      result.spreadStability = CalculateSpreadStability(m_spreadSeries);
+      result.optimalEntryZ = EstimateOptimalEntryZ(m_zScoreSeries, m_spreadSeries);
+
+      // Step 9: Generate Signal
       GenerateSignal(result);
 
       return true;
@@ -690,6 +704,313 @@ public:
    //| Get Lookback Period                                               |
    //+------------------------------------------------------------------+
    int GetLookback() { return m_lookback; }
+
+   // ============================================================
+   // ADVANCED ANALYTICS - CORRELATION & ROLLING STATISTICS
+   // ============================================================
+
+   //+------------------------------------------------------------------+
+   //| Calculate Pearson Correlation Coefficient                         |
+   //+------------------------------------------------------------------+
+   double CalculateCorrelation(double &seriesA[], double &seriesB[]) {
+      int sizeA = ArraySize(seriesA);
+      int sizeB = ArraySize(seriesB);
+      int size = MathMin(sizeA, sizeB);
+
+      if(size < 10) return 0;
+
+      // Calculate means
+      double meanA = 0, meanB = 0;
+      for(int i = 0; i < size; i++) {
+         meanA += seriesA[i];
+         meanB += seriesB[i];
+      }
+      meanA /= size;
+      meanB /= size;
+
+      // Calculate covariance and standard deviations
+      double covAB = 0, varA = 0, varB = 0;
+      for(int i = 0; i < size; i++) {
+         double devA = seriesA[i] - meanA;
+         double devB = seriesB[i] - meanB;
+         covAB += devA * devB;
+         varA += devA * devA;
+         varB += devB * devB;
+      }
+
+      double stdA = MathSqrt(varA / (size - 1));
+      double stdB = MathSqrt(varB / (size - 1));
+
+      if(stdA < 1e-10 || stdB < 1e-10) return 0;
+
+      return (covAB / (size - 1)) / (stdA * stdB);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Rolling Correlation over window                         |
+   //+------------------------------------------------------------------+
+   void CalculateRollingCorrelation(double &seriesA[], double &seriesB[],
+                                     int window, double &rollingCorr[]) {
+      int sizeA = ArraySize(seriesA);
+      int sizeB = ArraySize(seriesB);
+      int size = MathMin(sizeA, sizeB);
+
+      if(size < window + 10) {
+         ArrayResize(rollingCorr, 0);
+         return;
+      }
+
+      int outSize = size - window + 1;
+      ArrayResize(rollingCorr, outSize);
+
+      for(int i = 0; i < outSize; i++) {
+         double subA[], subB[];
+         ArrayResize(subA, window);
+         ArrayResize(subB, window);
+
+         for(int j = 0; j < window; j++) {
+            subA[j] = seriesA[i + j];
+            subB[j] = seriesB[i + j];
+         }
+
+         rollingCorr[i] = CalculateCorrelation(subA, subB);
+      }
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Variance Ratio Test (Lo-MacKinlay)                      |
+   //| Tests for random walk / mean reversion                            |
+   //| VR < 1 suggests mean reversion, VR > 1 suggests trending          |
+   //+------------------------------------------------------------------+
+   double CalculateVarianceRatio(double &series[], int lag = 2) {
+      int size = ArraySize(series);
+      if(size < lag * 10) return 1.0;  // Default to random walk
+
+      // Calculate 1-period returns
+      double returns[];
+      ArrayResize(returns, size - 1);
+      for(int i = 0; i < size - 1; i++) {
+         returns[i] = series[i] - series[i + 1];  // Log differences
+      }
+
+      // Variance of 1-period returns
+      double mean1 = 0;
+      int n1 = ArraySize(returns);
+      for(int i = 0; i < n1; i++) mean1 += returns[i];
+      mean1 /= n1;
+
+      double var1 = 0;
+      for(int i = 0; i < n1; i++) var1 += MathPow(returns[i] - mean1, 2);
+      var1 /= (n1 - 1);
+
+      // Calculate k-period returns
+      int nk = size - lag;
+      if(nk < 10) return 1.0;
+
+      double kReturns[];
+      ArrayResize(kReturns, nk);
+      for(int i = 0; i < nk; i++) {
+         kReturns[i] = series[i] - series[i + lag];
+      }
+
+      double meank = 0;
+      for(int i = 0; i < nk; i++) meank += kReturns[i];
+      meank /= nk;
+
+      double vark = 0;
+      for(int i = 0; i < nk; i++) vark += MathPow(kReturns[i] - meank, 2);
+      vark /= (nk - 1);
+
+      // Variance Ratio
+      if(var1 < 1e-10) return 1.0;
+      return (vark / lag) / var1;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Autocorrelation at specified lag                        |
+   //| Useful for detecting serial correlation in spread                 |
+   //+------------------------------------------------------------------+
+   double CalculateAutocorrelation(double &series[], int lag = 1) {
+      int size = ArraySize(series);
+      if(size < lag + 10) return 0;
+
+      // Calculate mean
+      double mean = 0;
+      for(int i = 0; i < size; i++) mean += series[i];
+      mean /= size;
+
+      // Calculate autocorrelation
+      double numerator = 0, denominator = 0;
+      for(int i = 0; i < size - lag; i++) {
+         numerator += (series[i] - mean) * (series[i + lag] - mean);
+      }
+
+      for(int i = 0; i < size; i++) {
+         denominator += MathPow(series[i] - mean, 2);
+      }
+
+      if(denominator < 1e-10) return 0;
+      return numerator / denominator;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Price Correlation between two symbols                   |
+   //+------------------------------------------------------------------+
+   double GetPairCorrelation(string symbolA, string symbolB, ENUM_TIMEFRAMES tf) {
+      double pricesA[], pricesB[];
+
+      if(!CalculateLogPrices(symbolA, tf, pricesA)) return 0;
+      if(!CalculateLogPrices(symbolB, tf, pricesB)) return 0;
+
+      return CalculateCorrelation(pricesA, pricesB);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get Spread Series (for external use)                              |
+   //+------------------------------------------------------------------+
+   void GetSpreadSeries(double &spread[]) {
+      int size = ArraySize(m_spreadSeries);
+      ArrayResize(spread, size);
+      ArrayCopy(spread, m_spreadSeries, 0, 0, size);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get Z-Score Series (for external use)                             |
+   //+------------------------------------------------------------------+
+   void GetZScoreSeries(double &zscores[]) {
+      int size = ArraySize(m_zScoreSeries);
+      ArrayResize(zscores, size);
+      ArrayCopy(zscores, m_zScoreSeries, 0, 0, size);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Spread Stability Index                                  |
+   //| Measures how stable the spread behavior is over time              |
+   //+------------------------------------------------------------------+
+   double CalculateSpreadStability(double &spread[]) {
+      int size = ArraySize(spread);
+      if(size < 50) return 0;
+
+      // Divide into 5 segments and check consistency
+      int segSize = size / 5;
+      double segMeans[5], segStds[5];
+
+      for(int seg = 0; seg < 5; seg++) {
+         int start = seg * segSize;
+         double sum = 0, sumSq = 0;
+
+         for(int i = start; i < start + segSize; i++) {
+            sum += spread[i];
+         }
+         segMeans[seg] = sum / segSize;
+
+         for(int i = start; i < start + segSize; i++) {
+            sumSq += MathPow(spread[i] - segMeans[seg], 2);
+         }
+         segStds[seg] = MathSqrt(sumSq / (segSize - 1));
+      }
+
+      // Calculate coefficient of variation of segment means and stds
+      double meanOfMeans = 0, meanOfStds = 0;
+      for(int i = 0; i < 5; i++) {
+         meanOfMeans += segMeans[i];
+         meanOfStds += segStds[i];
+      }
+      meanOfMeans /= 5;
+      meanOfStds /= 5;
+
+      double varMeans = 0, varStds = 0;
+      for(int i = 0; i < 5; i++) {
+         varMeans += MathPow(segMeans[i] - meanOfMeans, 2);
+         varStds += MathPow(segStds[i] - meanOfStds, 2);
+      }
+
+      double cvMeans = (meanOfMeans != 0) ? MathSqrt(varMeans / 5) / MathAbs(meanOfMeans) : 1;
+      double cvStds = (meanOfStds > 0) ? MathSqrt(varStds / 5) / meanOfStds : 1;
+
+      // Lower CV = more stable (invert for stability score)
+      double stability = 100 * (1 - MathMin(1, (cvMeans + cvStds) / 2));
+      return MathMax(0, stability);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Rolling Z-Score (returns array)                         |
+   //+------------------------------------------------------------------+
+   void CalculateRollingZScore(double &spread[], int window, double &rollingZ[]) {
+      int size = ArraySize(spread);
+      if(size < window + 10) {
+         ArrayResize(rollingZ, 0);
+         return;
+      }
+
+      int outSize = size - window + 1;
+      ArrayResize(rollingZ, outSize);
+
+      for(int i = 0; i < outSize; i++) {
+         // Calculate mean and std for window
+         double sum = 0, sumSq = 0;
+         for(int j = 0; j < window; j++) {
+            sum += spread[i + j];
+         }
+         double mean = sum / window;
+
+         for(int j = 0; j < window; j++) {
+            sumSq += MathPow(spread[i + j] - mean, 2);
+         }
+         double std = MathSqrt(sumSq / (window - 1));
+
+         // Z-Score at end of window
+         if(std > 1e-10) {
+            rollingZ[i] = (spread[i] - mean) / std;
+         } else {
+            rollingZ[i] = 0;
+         }
+      }
+   }
+
+   //+------------------------------------------------------------------+
+   //| Estimate Optimal Entry Z-Score based on historical performance    |
+   //+------------------------------------------------------------------+
+   double EstimateOptimalEntryZ(double &zscores[], double &spreads[]) {
+      int size = MathMin(ArraySize(zscores), ArraySize(spreads));
+      if(size < 50) return 2.0;  // Default
+
+      // Test different Z thresholds and find best mean reversion rate
+      double bestZ = 2.0;
+      double bestRate = 0;
+
+      for(double testZ = 1.5; testZ <= 3.0; testZ += 0.25) {
+         int entries = 0;
+         int successes = 0;
+
+         for(int i = 20; i < size - 10; i++) {
+            // Entry condition
+            if(MathAbs(zscores[i]) >= testZ) {
+               entries++;
+
+               // Check if Z-score reverted within next 10 bars
+               bool reverted = false;
+               for(int j = 1; j <= 10 && (i + j) < size; j++) {
+                  if(MathAbs(zscores[i + j]) < 0.5) {
+                     reverted = true;
+                     break;
+                  }
+               }
+               if(reverted) successes++;
+            }
+         }
+
+         if(entries >= 5) {
+            double rate = (double)successes / entries;
+            if(rate > bestRate) {
+               bestRate = rate;
+               bestZ = testZ;
+            }
+         }
+      }
+
+      return bestZ;
+   }
 };
 
 //+------------------------------------------------------------------+

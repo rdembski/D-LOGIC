@@ -8,11 +8,13 @@
 //|  - Z-Score Mean Reversion Strategy                                |
 //|  - Cointegration Testing (ADF + Zero-Crossing)                    |
 //|  - Dollar Neutral Position Sizing                                 |
+//|  - Hurst Exponent & Variance Ratio Testing                        |
+//|  - Correlation & Stability Analytics                              |
 //|  - Dark/Neon Professional UI                                      |
 //+------------------------------------------------------------------+
 #property copyright "Rafał Dembski"
 #property description "D-LOGIC Quant Dashboard - Statistical Arbitrage Engine"
-#property version   "4.10"
+#property version   "4.30"
 #property strict
 
 #include "DLogic_Engine.mqh"
@@ -304,7 +306,7 @@ void CheckSignals() {
 //+------------------------------------------------------------------+
 int OnInit() {
    Print("=======================================================");
-   Print("  D-LOGIC QUANT DASHBOARD v4.10");
+   Print("  D-LOGIC QUANT DASHBOARD v4.30");
    Print("  Statistical Arbitrage Engine");
    Print("  Author: Rafał Dembski");
    Print("-------------------------------------------------------");

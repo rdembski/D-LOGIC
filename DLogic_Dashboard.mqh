@@ -1335,7 +1335,7 @@ public:
          DeleteAllContent();
          // Minimized bar at top
          CreateRect("TITLE_BG", 5, 25, chartWidth - 10, 28, CLR_BG_MAIN, CLR_NEON_CYAN);
-         CreateLabel("TITLE", "D-LOGIC QUANT v4.20 [MINIMIZED] - Press Q to expand", 15, 30, CLR_TEXT_BRIGHT, 9, "Consolas Bold");
+         CreateLabel("TITLE", "D-LOGIC QUANT v4.30 [MINIMIZED] - Press Q to expand", 15, 30, CLR_TEXT_BRIGHT, 9, "Consolas Bold");
          CreateButton("BTN_MIN", "+", chartWidth - 35, 28, 22, 20, CLR_BG_PANEL, CLR_TEXT_BRIGHT, 12);
          ChartRedraw(0);
          return;
@@ -1401,7 +1401,7 @@ public:
 
       // Title bar
       CreateRect("TOP_TITLE_BG", x, y, w, 28, CLR_BG_HEADER, CLR_NEON_CYAN);
-      CreateLabel("TOP_TITLE", "D-LOGIC QUANT DASHBOARD v4.20", x + 10, y + 6, CLR_TEXT_BRIGHT, 10, "Consolas Bold");
+      CreateLabel("TOP_TITLE", "D-LOGIC QUANT DASHBOARD v4.30", x + 10, y + 6, CLR_TEXT_BRIGHT, 10, "Consolas Bold");
       CreateLabel("TOP_SUBTITLE", "Statistical Arbitrage Engine", x + 280, y + 8, CLR_NEON_CYAN, 8);
 
       // Status indicator
@@ -1544,16 +1544,18 @@ public:
       DrawRiskMetrics(x + 5, panelY, panelW, result);
       panelY += 115;
 
-      // Advanced Analytics
+      // Advanced Analytics (expanded with new metrics)
       DrawCompactAdvancedAnalytics(x + 5, panelY, panelW, result);
-      panelY += 120;
+      panelY += 182;
 
       // Position Info
       DrawPositionInfo(x + 5, panelY, panelW);
       panelY += 85;
 
-      // Alerts
-      DrawAlertSettings(x + 5, panelY, panelW);
+      // Alerts (only if space available)
+      if(panelY + 80 < y + h) {
+         DrawAlertSettings(x + 5, panelY, panelW);
+      }
    }
 
    //+------------------------------------------------------------------+
@@ -1597,14 +1599,14 @@ public:
    //| Draw Compact Advanced Analytics                                   |
    //+------------------------------------------------------------------+
    void DrawCompactAdvancedAnalytics(int x, int y, int w, SPairResult &result) {
-      int h = 115;
+      int h = 175;  // Expanded height for more metrics
       CreateRect("ADV_BG", x, y, w, h, CLR_BG_MAIN, CLR_BORDER_ACCENT);
       CreateLabel("ADV_TITLE", "QUANT METRICS", x + 10, y + 5, CLR_NEON_MAGENTA, 8, "Consolas Bold");
 
       int row = 0;
-      int rowH = 15;
+      int rowH = 14;
       int startY = y + 22;
-      int valX = x + 120;
+      int valX = x + 100;
 
       // Hurst
       color hurstColor = result.hurstExponent < 0.45 ? CLR_NEON_GREEN :
@@ -1613,10 +1615,32 @@ public:
       CreateLabel("ADV_H_V", DoubleToString(result.hurstExponent, 3), valX, startY + row * rowH, hurstColor, 7, "Consolas Bold");
       row++;
 
-      // Vol Ratio
-      color volColor = (result.volatilityRatio >= 0.7 && result.volatilityRatio <= 1.3) ? CLR_NEON_GREEN : CLR_NEON_YELLOW;
-      CreateLabel("ADV_V_L", "Vol Ratio:", x + 8, startY + row * rowH, CLR_TEXT_DIM, 7);
-      CreateLabel("ADV_V_V", DoubleToString(result.volatilityRatio, 2) + "x", valX, startY + row * rowH, volColor, 7, "Consolas Bold");
+      // Variance Ratio
+      color vrColor = result.varianceRatio < 0.9 ? CLR_NEON_GREEN :
+                     (result.varianceRatio < 1.1 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("ADV_VR_L", "VR Test:", x + 8, startY + row * rowH, CLR_TEXT_DIM, 7);
+      CreateLabel("ADV_VR_V", DoubleToString(result.varianceRatio, 3), valX, startY + row * rowH, vrColor, 7, "Consolas Bold");
+      row++;
+
+      // Correlation
+      color corrColor = MathAbs(result.priceCorrelation) >= 0.7 ? CLR_NEON_GREEN :
+                       (MathAbs(result.priceCorrelation) >= 0.5 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("ADV_CR_L", "Correl:", x + 8, startY + row * rowH, CLR_TEXT_DIM, 7);
+      CreateLabel("ADV_CR_V", DoubleToString(result.priceCorrelation, 3), valX, startY + row * rowH, corrColor, 7, "Consolas Bold");
+      row++;
+
+      // Autocorrelation
+      color acColor = result.autocorrelation > 0.5 ? CLR_NEON_GREEN :
+                     (result.autocorrelation > 0 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("ADV_AC_L", "AutoCorr:", x + 8, startY + row * rowH, CLR_TEXT_DIM, 7);
+      CreateLabel("ADV_AC_V", DoubleToString(result.autocorrelation, 3), valX, startY + row * rowH, acColor, 7, "Consolas Bold");
+      row++;
+
+      // Stability
+      color stabColor = result.spreadStability >= 70 ? CLR_NEON_GREEN :
+                       (result.spreadStability >= 40 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("ADV_ST_L", "Stability:", x + 8, startY + row * rowH, CLR_TEXT_DIM, 7);
+      CreateLabel("ADV_ST_V", DoubleToString(result.spreadStability, 0) + "%", valX, startY + row * rowH, stabColor, 7, "Consolas Bold");
       row++;
 
       // Quality
@@ -1626,27 +1650,48 @@ public:
       CreateLabel("ADV_Q_V", IntegerToString(result.qualityScore) + "/100", valX, startY + row * rowH, qualColor, 7, "Consolas Bold");
       row++;
 
+      // Optimal Entry Z
+      CreateLabel("ADV_OZ_L", "Opt.Entry:", x + 8, startY + row * rowH, CLR_TEXT_DIM, 7);
+      CreateLabel("ADV_OZ_V", "Z=" + DoubleToString(result.optimalEntryZ, 2), valX, startY + row * rowH, CLR_NEON_CYAN, 7, "Consolas Bold");
+      row++;
+
       // Kelly
       CreateLabel("ADV_K_L", "Kelly:", x + 8, startY + row * rowH, CLR_TEXT_DIM, 7);
       CreateLabel("ADV_K_V", DoubleToString(result.kellyFraction * 100, 1) + "%", valX, startY + row * rowH, CLR_NEON_CYAN, 7, "Consolas Bold");
       row++;
 
-      // Recommendation
+      // Separator
+      CreateRect("ADV_SEP", x + 5, startY + row * rowH, w - 10, 1, CLR_BORDER);
       row++;
+
+      // Recommendation
       string recText = "";
       color recColor = CLR_TEXT_DIM;
 
-      if(result.qualityScore >= 70 && MathAbs(result.zScore) >= 2.0 && result.hurstExponent < 0.5) {
+      // Enhanced recommendation logic using all metrics
+      bool goodHurst = result.hurstExponent < 0.5;
+      bool goodVR = result.varianceRatio < 1.0;
+      bool goodCorr = MathAbs(result.priceCorrelation) >= 0.6;
+      bool goodStab = result.spreadStability >= 50;
+      bool strongZ = MathAbs(result.zScore) >= result.optimalEntryZ;
+
+      int bullishFactors = (goodHurst ? 1 : 0) + (goodVR ? 1 : 0) + (goodCorr ? 1 : 0) + (goodStab ? 1 : 0);
+
+      if(bullishFactors >= 3 && strongZ && result.qualityScore >= 70) {
          recText = "★★★ STRONG";
          recColor = result.zScore > 0 ? CLR_NEON_RED : CLR_NEON_GREEN;
       }
-      else if(result.qualityScore >= 50 && MathAbs(result.zScore) >= 1.5) {
+      else if(bullishFactors >= 2 && result.qualityScore >= 50 && MathAbs(result.zScore) >= 1.5) {
          recText = "★★ MODERATE";
          recColor = CLR_NEON_YELLOW;
       }
-      else if(result.hurstExponent > 0.55) {
+      else if(!goodHurst && !goodVR) {
          recText = "⚠ TRENDING";
          recColor = CLR_NEON_RED;
+      }
+      else if(!goodStab) {
+         recText = "⚠ UNSTABLE";
+         recColor = CLR_NEON_ORANGE;
       }
       else {
          recText = "○ WAIT";
