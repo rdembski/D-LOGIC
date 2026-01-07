@@ -3,10 +3,10 @@
 //|              D-LOGIC Professional Pairs Trading Dashboard         |
 //|                                        Author: Rafał Dembski     |
 //|                                                                   |
-//|  Professional Transparent Overlay Dashboard v4.50                 |
-//|  - Header: Title + Pairs Scanner                                  |
-//|  - Left Panel: Analytics & Metrics                                |
-//|  - Bottom: Spread Chart + Performance                             |
+//|  Classic Terminal Panel Design v4.50                              |
+//|  - Scanner Panel (top-left)                                       |
+//|  - Spread Chart Panel (middle-left)                               |
+//|  - Analytics Panel (bottom-left)                                  |
 //+------------------------------------------------------------------+
 #property copyright "Rafał Dembski"
 #property strict
@@ -14,35 +14,46 @@
 #include "DLogic_Engine.mqh"
 
 // ============================================================
-// COLOR SCHEME - PROFESSIONAL NEON ON TRANSPARENT
+// COLOR SCHEME - CLASSIC TERMINAL
 // ============================================================
-#define CLR_NEON_GREEN     C'0,255,128'     // Long/Profit
-#define CLR_NEON_RED       C'255,60,80'     // Short/Loss
-#define CLR_NEON_CYAN      C'0,220,255'     // Info/Accent
-#define CLR_NEON_YELLOW    C'255,220,50'    // Warning
-#define CLR_NEON_MAGENTA   C'255,50,200'    // Highlight
+#define CLR_PANEL_BG       C'20,22,28'      // Dark panel background
+#define CLR_PANEL_BORDER   C'50,55,70'      // Panel border
+#define CLR_TITLE_BG       C'30,80,120'     // Title bar background (blue)
+#define CLR_TITLE_TEXT     C'220,230,255'   // Title text
+
+#define CLR_NEON_GREEN     C'0,255,100'     // Positive/Long
+#define CLR_NEON_RED       C'255,80,80'     // Negative/Short
+#define CLR_NEON_CYAN      C'0,200,255'     // Accent
+#define CLR_NEON_YELLOW    C'255,220,0'     // Warning
 #define CLR_NEON_ORANGE    C'255,150,50'    // Alert
-#define CLR_NEON_BLUE      C'80,150,255'    // Secondary
 
 #define CLR_TEXT_WHITE     C'255,255,255'   // Primary text
-#define CLR_TEXT_LIGHT     C'200,210,230'   // Light text
-#define CLR_TEXT_DIM       C'140,150,170'   // Secondary text
-#define CLR_TEXT_DARK      C'90,100,120'    // Muted text
+#define CLR_TEXT_LIGHT     C'180,190,210'   // Secondary text
+#define CLR_TEXT_DIM       C'120,130,150'   // Dim text
+#define CLR_TEXT_DARK      C'80,90,110'     // Very dim
 
-#define CLR_PANEL_BG       C'15,17,23'      // Semi-transparent panels
-#define CLR_BORDER_GLOW    C'60,80,120'     // Subtle glow borders
+#define CLR_ROW_EVEN       C'25,28,35'      // Even row
+#define CLR_ROW_ODD        C'30,33,42'      // Odd row
+#define CLR_ROW_SELECTED   C'40,60,90'      // Selected row
+
+#define CLR_CHART_BG       C'15,18,25'      // Chart background
+#define CLR_CHART_GRID     C'35,40,50'      // Chart grid
+#define CLR_SPREAD_LINE    C'100,180,255'   // Spread line
 
 // ============================================================
 // LAYOUT DIMENSIONS
 // ============================================================
-#define HEADER_HEIGHT      85              // Compact header
-#define LEFT_PANEL_WIDTH   280             // Left analytics panel
-#define BOTTOM_HEIGHT      140             // Bottom panel
-#define MARGIN             8               // Standard margin
-#define ROW_HEIGHT         15              // Text row height
+#define PANEL_X            10              // Panel X position
+#define PANEL_Y            25              // Panel Y position
+#define PANEL_WIDTH        420             // Panel width
+#define TITLE_HEIGHT       22              // Title bar height
+#define ROW_HEIGHT         18              // Table row height (larger)
+#define FONT_SIZE          9               // Larger font size
+#define FONT_SIZE_TITLE    10              // Title font size
+#define FONT_SIZE_SMALL    8               // Small font
 
 // ============================================================
-// REGIME TYPES
+// STRUCTURES
 // ============================================================
 enum ENUM_REGIME {
    REGIME_MEAN_REVERT,
@@ -51,9 +62,6 @@ enum ENUM_REGIME {
    REGIME_CONSOLIDATION
 };
 
-// ============================================================
-// SIGNAL HISTORY STRUCTURE
-// ============================================================
 struct SSignalHistory {
    datetime   time;
    string     pairName;
@@ -64,9 +72,6 @@ struct SSignalHistory {
    double     entryPL;
 };
 
-// ============================================================
-// PERFORMANCE TRACKING
-// ============================================================
 struct SPerformanceStats {
    int        totalSignals;
    int        executedTrades;
@@ -85,11 +90,13 @@ struct SPerformanceStats {
 };
 
 //+------------------------------------------------------------------+
-//| CDashboard - Professional Transparent Overlay                     |
+//| CDashboard - Classic Terminal Panel Design                        |
 //+------------------------------------------------------------------+
 class CDashboard {
 private:
    string         m_prefix;
+   int            m_startX;
+   int            m_startY;
    bool           m_isVisible;
 
    // Data
@@ -120,14 +127,14 @@ private:
 
    // Alert system
    bool           m_alertsEnabled;
-   double         m_lastAlertZ;
-   datetime       m_lastAlertTime;
+   double         m_alertZThreshold;
+   double         m_alertStrengthThreshold;
 
    //+------------------------------------------------------------------+
-   //| Create Label - Core function                                      |
+   //| Create Label                                                      |
    //+------------------------------------------------------------------+
    void CreateLabel(string name, string text, int x, int y, color clr,
-                    int fontSize = 8, string font = "Consolas") {
+                    int fontSize = FONT_SIZE, string font = "Consolas") {
       string objName = m_prefix + name;
 
       if(ObjectFind(0, objName) < 0) {
@@ -147,10 +154,10 @@ private:
    }
 
    //+------------------------------------------------------------------+
-   //| Create Rectangle with transparency support                        |
+   //| Create Rectangle Panel                                            |
    //+------------------------------------------------------------------+
-   void CreateRect(string name, int x, int y, int w, int h, color clr,
-                   color borderClr = clrNONE, int transparency = 0) {
+   void CreatePanel(string name, int x, int y, int w, int h,
+                    color bgClr, color borderClr = clrNONE) {
       string objName = m_prefix + name;
 
       if(ObjectFind(0, objName) < 0) {
@@ -161,7 +168,7 @@ private:
       ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y);
       ObjectSetInteger(0, objName, OBJPROP_XSIZE, w);
       ObjectSetInteger(0, objName, OBJPROP_YSIZE, h);
-      ObjectSetInteger(0, objName, OBJPROP_BGCOLOR, clr);
+      ObjectSetInteger(0, objName, OBJPROP_BGCOLOR, bgClr);
       ObjectSetInteger(0, objName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
       ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
       ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
@@ -171,40 +178,15 @@ private:
          ObjectSetInteger(0, objName, OBJPROP_COLOR, borderClr);
          ObjectSetInteger(0, objName, OBJPROP_WIDTH, 1);
       } else {
-         ObjectSetInteger(0, objName, OBJPROP_COLOR, clr);
+         ObjectSetInteger(0, objName, OBJPROP_COLOR, bgClr);
       }
-   }
-
-   //+------------------------------------------------------------------+
-   //| Create thin line separator                                        |
-   //+------------------------------------------------------------------+
-   void CreateLine(string name, int x1, int y1, int x2, int y2, color clr) {
-      // Use rectangle as line
-      string objName = m_prefix + name;
-      int w = MathMax(1, MathAbs(x2 - x1));
-      int h = MathMax(1, MathAbs(y2 - y1));
-
-      if(ObjectFind(0, objName) < 0) {
-         ObjectCreate(0, objName, OBJ_RECTANGLE_LABEL, 0, 0, 0);
-      }
-
-      ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, MathMin(x1, x2));
-      ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, MathMin(y1, y2));
-      ObjectSetInteger(0, objName, OBJPROP_XSIZE, w);
-      ObjectSetInteger(0, objName, OBJPROP_YSIZE, h);
-      ObjectSetInteger(0, objName, OBJPROP_BGCOLOR, clr);
-      ObjectSetInteger(0, objName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-      ObjectSetInteger(0, objName, OBJPROP_COLOR, clr);
-      ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
-      ObjectSetInteger(0, objName, OBJPROP_BACK, true);
    }
 
    //+------------------------------------------------------------------+
    //| Create Button                                                     |
    //+------------------------------------------------------------------+
    void CreateButton(string name, string text, int x, int y, int w, int h,
-                     color bgClr, color txtClr, int fontSize = 8) {
+                     color bgClr, color txtClr, int fontSize = FONT_SIZE) {
       string objName = m_prefix + name;
 
       if(ObjectFind(0, objName) < 0) {
@@ -217,7 +199,7 @@ private:
       ObjectSetInteger(0, objName, OBJPROP_YSIZE, h);
       ObjectSetInteger(0, objName, OBJPROP_BGCOLOR, bgClr);
       ObjectSetInteger(0, objName, OBJPROP_COLOR, txtClr);
-      ObjectSetInteger(0, objName, OBJPROP_BORDER_COLOR, CLR_BORDER_GLOW);
+      ObjectSetInteger(0, objName, OBJPROP_BORDER_COLOR, CLR_PANEL_BORDER);
       ObjectSetString(0, objName, OBJPROP_TEXT, text);
       ObjectSetString(0, objName, OBJPROP_FONT, "Consolas");
       ObjectSetInteger(0, objName, OBJPROP_FONTSIZE, fontSize);
@@ -226,7 +208,7 @@ private:
    }
 
    //+------------------------------------------------------------------+
-   //| Delete all dashboard objects                                      |
+   //| Delete all objects                                                |
    //+------------------------------------------------------------------+
    void DeleteAll() {
       ObjectsDeleteAll(0, m_prefix);
@@ -247,13 +229,14 @@ private:
    //+------------------------------------------------------------------+
    //| Get signal text                                                   |
    //+------------------------------------------------------------------+
-   string GetSignalText(int signal, double z) {
-      if(signal == 2) return "▲▲ LONG";
-      if(signal == 1) return "▲ LONG";
-      if(signal == -1) return "▼ SHORT";
-      if(signal == -2) return "▼▼ SHORT";
-      if(MathAbs(z) <= 0.5) return "◆ EXIT";
-      return "● WAIT";
+   string GetSignalText(int signal) {
+      switch(signal) {
+         case 2:  return "Long";
+         case 1:  return "Long";
+         case -1: return "Short";
+         case -2: return "Short";
+         default: return "None";
+      }
    }
 
    //+------------------------------------------------------------------+
@@ -274,22 +257,13 @@ private:
    //+------------------------------------------------------------------+
    double CalculateSignalStrength(SPairResult &result) {
       double strength = 0;
-
-      // Z-Score component (40%)
       double zComponent = MathMin(40, MathAbs(result.zScore) * 15);
       strength += zComponent;
-
-      // Cointegration (25%)
       if(result.isCointegrated) strength += 25;
-
-      // Hurst mean reversion (20%)
       if(result.hurstExponent < 0.5) {
          strength += (0.5 - result.hurstExponent) * 40;
       }
-
-      // Stability (15%)
       strength += result.spreadStability * 0.15;
-
       return MathMin(100, strength);
    }
 
@@ -298,7 +272,9 @@ public:
    //| Constructor                                                       |
    //+------------------------------------------------------------------+
    CDashboard() {
-      m_prefix = "DLOGIC_";
+      m_prefix = "DL_";
+      m_startX = PANEL_X;
+      m_startY = PANEL_Y;
       m_isVisible = true;
       m_resultCount = 0;
       m_selectedRow = 0;
@@ -307,8 +283,8 @@ public:
       m_historyCount = 0;
       m_maxHistory = 50;
       m_alertsEnabled = true;
-      m_lastAlertZ = 0;
-      m_lastAlertTime = 0;
+      m_alertZThreshold = 2.0;
+      m_alertStrengthThreshold = 60;
       m_currentRegime = REGIME_CONSOLIDATION;
       m_signalStrength = 0;
 
@@ -321,7 +297,7 @@ public:
    }
 
    //+------------------------------------------------------------------+
-   //| Initialize Dashboard                                              |
+   //| Initialize                                                        |
    //+------------------------------------------------------------------+
    void Init() {
       DeleteAll();
@@ -329,14 +305,22 @@ public:
    }
 
    //+------------------------------------------------------------------+
-   //| Deinitialize Dashboard                                            |
+   //| Deinitialize                                                      |
    //+------------------------------------------------------------------+
    void Deinit() {
       DeleteAll();
    }
 
    //+------------------------------------------------------------------+
-   //| Update scan results                                               |
+   //| Set Position                                                      |
+   //+------------------------------------------------------------------+
+   void SetPosition(int x, int y) {
+      m_startX = x;
+      m_startY = y;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Update results                                                    |
    //+------------------------------------------------------------------+
    void UpdateResults(SPairResult &results[], int count) {
       m_resultCount = count;
@@ -348,7 +332,6 @@ public:
 
       if(m_selectedRow >= count) m_selectedRow = MathMax(0, count - 1);
 
-      // Update analytics for selected pair
       if(count > 0 && m_selectedRow < count) {
          m_currentRegime = DetectRegime(m_scanResults[m_selectedRow]);
          m_signalStrength = CalculateSignalStrength(m_scanResults[m_selectedRow]);
@@ -356,10 +339,9 @@ public:
    }
 
    //+------------------------------------------------------------------+
-   //| Update spread history                                             |
+   //| Update spread history (2 params - single values)                  |
    //+------------------------------------------------------------------+
    void UpdateSpreadHistory(double spread, double zScore) {
-      // Shift arrays
       for(int i = m_historySize - 1; i > 0; i--) {
          m_spreadHistory[i] = m_spreadHistory[i-1];
          m_zScoreHistory[i] = m_zScoreHistory[i-1];
@@ -369,13 +351,24 @@ public:
    }
 
    //+------------------------------------------------------------------+
+   //| Update spread history (3 params - arrays)                         |
+   //+------------------------------------------------------------------+
+   void UpdateSpreadHistory(double &spread[], double &zScore[], int size) {
+      int copySize = MathMin(size, m_historySize);
+      for(int i = 0; i < copySize; i++) {
+         m_spreadHistory[i] = spread[i];
+         m_zScoreHistory[i] = zScore[i];
+      }
+   }
+
+   //+------------------------------------------------------------------+
    //| Main Draw function                                                |
    //+------------------------------------------------------------------+
    void Draw() {
       if(!m_isVisible) return;
 
-      int chartW = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
-      int chartH = (int)ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS);
+      int x = m_startX;
+      int y = m_startY;
 
       // Get selected pair data
       SPairResult result;
@@ -389,539 +382,431 @@ public:
          result.hurstExponent = 0.5;
          result.varianceRatio = 1.0;
          result.qualityScore = 0;
-         result.spreadStability = 0;
-         result.priceCorrelation = 0;
       }
 
-      // Draw panels
-      DrawHeader(chartW);
-      DrawLeftPanel(chartH, result);
-      DrawBottom(chartW, chartH, result);
+      // PANEL 1: Scanner (top)
+      int panel1H = TITLE_HEIGHT + ROW_HEIGHT * 12 + 30;
+      DrawScannerPanel(x, y, PANEL_WIDTH, panel1H);
+
+      // PANEL 2: Spread Chart (middle)
+      int panel2Y = y + panel1H + 8;
+      int panel2H = 140;
+      DrawSpreadPanel(x, panel2Y, PANEL_WIDTH, panel2H, result);
+
+      // PANEL 3: Analytics (bottom)
+      int panel3Y = panel2Y + panel2H + 8;
+      int panel3H = 180;
+      DrawAnalyticsPanel(x, panel3Y, PANEL_WIDTH, panel3H, result);
 
       ChartRedraw(0);
    }
 
    //+------------------------------------------------------------------+
-   //| Draw Header (Top)                                                 |
+   //| Draw Scanner Panel                                                |
    //+------------------------------------------------------------------+
-   void DrawHeader(int chartW) {
-      int x = MARGIN;
-      int y = 5;
+   void DrawScannerPanel(int x, int y, int w, int h) {
+      // Panel background
+      CreatePanel("SCAN_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER);
 
-      // Semi-transparent header background
-      CreateRect("HDR_BG", 0, 0, chartW, HEADER_HEIGHT, CLR_PANEL_BG, CLR_BORDER_GLOW);
+      // Title bar
+      CreatePanel("SCAN_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG);
+      CreateLabel("SCAN_TITLE", "Pairs Trading Dashboard - D-LOGIC 4.50",
+                  x + 8, y + 3, CLR_TITLE_TEXT, FONT_SIZE_TITLE, "Consolas Bold");
 
-      // Title section
-      CreateLabel("TITLE", "D-LOGIC", x, y, CLR_NEON_CYAN, 14, "Consolas Bold");
-      CreateLabel("TITLE2", "QUANT", x + 95, y, CLR_TEXT_WHITE, 14, "Consolas Bold");
-      CreateLabel("VERSION", "v4.50", x + 170, y + 4, CLR_TEXT_DIM, 8);
+      // SCAN button
+      CreateButton("BTN_SCAN", "SCAN", x + w - 55, y + 2, 50, 18,
+                   C'40,100,60', CLR_NEON_GREEN, FONT_SIZE_SMALL);
 
-      // Status
-      string statusText = m_resultCount > 0 ? "● LIVE" : "○ IDLE";
-      color statusClr = m_resultCount > 0 ? CLR_NEON_GREEN : CLR_TEXT_DIM;
-      CreateLabel("STATUS", statusText, x + 220, y + 4, statusClr, 8);
-
-      // Current time
-      CreateLabel("TIME", TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES),
-                  chartW - 120, y + 2, CLR_TEXT_DIM, 8);
-
-      // Separator line
-      CreateLine("HDR_LINE", x, y + 22, chartW - MARGIN, y + 22, CLR_BORDER_GLOW);
-
-      // Scanner section
-      DrawScanner(x, y + 28, chartW - MARGIN * 2);
-   }
-
-   //+------------------------------------------------------------------+
-   //| Draw Scanner Table                                                |
-   //+------------------------------------------------------------------+
-   void DrawScanner(int x, int y, int w) {
       // Column headers
-      int cols[] = {0, 25, 130, 180, 240, 300, 365, 430, 500, 570, 650, 730};
+      int headerY = y + TITLE_HEIGHT + 5;
+      int cols[] = {8, 130, 165, 220, 265, 310, 360};
 
-      CreateLabel("SC_H0", "●", x + cols[0], y, CLR_TEXT_DIM, 7);
-      CreateLabel("SC_H1", "PAIR", x + cols[1], y, CLR_TEXT_DIM, 7, "Consolas Bold");
-      CreateLabel("SC_H2", "Z", x + cols[2], y, CLR_TEXT_DIM, 7, "Consolas Bold");
-      CreateLabel("SC_H3", "SIGNAL", x + cols[3], y, CLR_TEXT_DIM, 7, "Consolas Bold");
-      CreateLabel("SC_H4", "BETA", x + cols[4], y, CLR_TEXT_DIM, 7, "Consolas Bold");
-      CreateLabel("SC_H5", "R²", x + cols[5], y, CLR_TEXT_DIM, 7, "Consolas Bold");
-      CreateLabel("SC_H6", "HL", x + cols[6], y, CLR_TEXT_DIM, 7, "Consolas Bold");
-      CreateLabel("SC_H7", "HURST", x + cols[7], y, CLR_TEXT_DIM, 7, "Consolas Bold");
-      CreateLabel("SC_H8", "VR", x + cols[8], y, CLR_TEXT_DIM, 7, "Consolas Bold");
-      CreateLabel("SC_H9", "CORR", x + cols[9], y, CLR_TEXT_DIM, 7, "Consolas Bold");
-      CreateLabel("SC_H10", "QUAL", x + cols[10], y, CLR_TEXT_DIM, 7, "Consolas Bold");
-
-      // Header underline
-      CreateLine("SC_HLINE", x, y + 12, x + 800, y + 12, CLR_BORDER_GLOW);
+      CreateLabel("H_PAIR", "Pair", x + cols[0], headerY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+      CreateLabel("H_TF", "TF", x + cols[1], headerY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+      CreateLabel("H_SPEAR", "Spearman", x + cols[2] - 15, headerY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+      CreateLabel("H_ZSCORE", "Z-Score", x + cols[3], headerY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+      CreateLabel("H_TYPE", "Type", x + cols[4], headerY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+      CreateLabel("H_SIGNAL", "Signal", x + cols[5], headerY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
 
       // Data rows
-      int rowY = y + 16;
-      int maxRows = MathMin(4, m_resultCount);
+      int rowY = headerY + ROW_HEIGHT + 2;
+      int maxRows = MathMin(10, m_resultCount);
 
       for(int i = 0; i < maxRows; i++) {
          int idx = i + m_scrollOffset;
          if(idx >= m_resultCount) break;
 
          SPairResult r = m_scanResults[idx];
-         string rowPrefix = "SC_R" + IntegerToString(i) + "_";
+         string rowPfx = "R" + IntegerToString(i) + "_";
          bool isSelected = (idx == m_selectedRow);
 
-         // Selection indicator
-         color rowColor = isSelected ? CLR_NEON_CYAN : CLR_TEXT_LIGHT;
-         string selectMark = isSelected ? "▶" : (r.isCointegrated ? "●" : "○");
-         color selectClr = r.isCointegrated ? CLR_NEON_GREEN : CLR_TEXT_DARK;
-         if(isSelected) selectClr = CLR_NEON_CYAN;
+         // Row background
+         color rowBg = isSelected ? CLR_ROW_SELECTED : (i % 2 == 0 ? CLR_ROW_EVEN : CLR_ROW_ODD);
+         CreatePanel(rowPfx + "BG", x + 2, rowY - 1, w - 4, ROW_HEIGHT, rowBg);
 
-         CreateLabel(rowPrefix + "SEL", selectMark, x + cols[0], rowY, selectClr, 7);
-         CreateLabel(rowPrefix + "PAIR", r.pairName, x + cols[1], rowY, rowColor, 7, isSelected ? "Consolas Bold" : "Consolas");
+         // Pair name
+         color pairClr = isSelected ? CLR_NEON_CYAN : CLR_TEXT_WHITE;
+         CreateLabel(rowPfx + "PAIR", r.pairName, x + cols[0], rowY, pairClr, FONT_SIZE);
 
-         // Z-Score with color
+         // Timeframe
+         string tfStr = "H1";
+         if(r.timeframe == PERIOD_H4) tfStr = "H4";
+         else if(r.timeframe == PERIOD_D1) tfStr = "D1";
+         CreateLabel(rowPfx + "TF", tfStr, x + cols[1], rowY, CLR_TEXT_DIM, FONT_SIZE);
+
+         // Spearman/Correlation
+         color corrClr = MathAbs(r.priceCorrelation) >= 0.7 ? CLR_NEON_GREEN :
+                        (MathAbs(r.priceCorrelation) >= 0.5 ? CLR_NEON_YELLOW : CLR_TEXT_DIM);
+         CreateLabel(rowPfx + "CORR", DoubleToString(r.priceCorrelation, 2),
+                     x + cols[2], rowY, corrClr, FONT_SIZE);
+
+         // Z-Score
          color zClr = GetZScoreColor(r.zScore);
-         string zText = (r.zScore > 0 ? "+" : "") + DoubleToString(r.zScore, 2);
-         CreateLabel(rowPrefix + "Z", zText, x + cols[2], rowY, zClr, 7, "Consolas Bold");
+         string zStr = (r.zScore >= 0 ? " " : "") + DoubleToString(r.zScore, 2);
+         CreateLabel(rowPfx + "Z", zStr, x + cols[3], rowY, zClr, FONT_SIZE, "Consolas Bold");
+
+         // Type (Pos/Neg)
+         string typeStr = r.zScore >= 0 ? "Pos" : "Neg";
+         color typeClr = r.zScore >= 0 ? CLR_NEON_GREEN : CLR_NEON_RED;
+         CreateLabel(rowPfx + "TYPE", typeStr, x + cols[4], rowY, typeClr, FONT_SIZE);
 
          // Signal
-         color sigClr = r.signal > 0 ? CLR_NEON_GREEN : (r.signal < 0 ? CLR_NEON_RED : CLR_TEXT_DIM);
-         CreateLabel(rowPrefix + "SIG", GetSignalText(r.signal, r.zScore), x + cols[3], rowY, sigClr, 7);
-
-         // Beta
-         CreateLabel(rowPrefix + "BETA", DoubleToString(r.beta, 4), x + cols[4], rowY, CLR_TEXT_LIGHT, 7);
-
-         // R²
-         color r2Clr = r.rSquared >= 0.8 ? CLR_NEON_GREEN : (r.rSquared >= 0.6 ? CLR_NEON_YELLOW : CLR_TEXT_DIM);
-         CreateLabel(rowPrefix + "R2", DoubleToString(r.rSquared, 2), x + cols[5], rowY, r2Clr, 7);
-
-         // Half-life
-         color hlClr = (r.halfLife > 5 && r.halfLife < 50) ? CLR_NEON_GREEN : CLR_NEON_YELLOW;
-         CreateLabel(rowPrefix + "HL", DoubleToString(r.halfLife, 1), x + cols[6], rowY, hlClr, 7);
-
-         // Hurst
-         color hClr = r.hurstExponent < 0.45 ? CLR_NEON_GREEN : (r.hurstExponent < 0.55 ? CLR_NEON_YELLOW : CLR_NEON_RED);
-         CreateLabel(rowPrefix + "HURST", DoubleToString(r.hurstExponent, 2), x + cols[7], rowY, hClr, 7);
-
-         // VR
-         color vrClr = r.varianceRatio < 0.9 ? CLR_NEON_GREEN : (r.varianceRatio < 1.1 ? CLR_NEON_YELLOW : CLR_NEON_RED);
-         CreateLabel(rowPrefix + "VR", DoubleToString(r.varianceRatio, 2), x + cols[8], rowY, vrClr, 7);
-
-         // Correlation
-         color corrClr = MathAbs(r.priceCorrelation) >= 0.7 ? CLR_NEON_GREEN : CLR_NEON_YELLOW;
-         CreateLabel(rowPrefix + "CORR", DoubleToString(r.priceCorrelation, 2), x + cols[9], rowY, corrClr, 7);
-
-         // Quality
-         color qClr = r.qualityScore >= 70 ? CLR_NEON_GREEN : (r.qualityScore >= 50 ? CLR_NEON_YELLOW : CLR_NEON_RED);
-         CreateLabel(rowPrefix + "QUAL", IntegerToString(r.qualityScore), x + cols[10], rowY, qClr, 7, "Consolas Bold");
+         string sigStr = GetSignalText(r.signal);
+         color sigClr = r.signal == 0 ? CLR_TEXT_DIM :
+                       (r.signal > 0 ? CLR_NEON_GREEN : CLR_NEON_RED);
+         CreateLabel(rowPfx + "SIG", sigStr, x + cols[5], rowY, sigClr, FONT_SIZE);
 
          rowY += ROW_HEIGHT;
+      }
+
+      // Footer
+      int footerY = y + h - 18;
+      string footerText = "Pairs: " + IntegerToString(m_resultCount) +
+                          " | Signals: " + IntegerToString(m_perfStats.totalSignals) +
+                          " | Pos: " + IntegerToString(m_perfStats.winningTrades) +
+                          " | Neg: " + IntegerToString(m_perfStats.losingTrades);
+      CreateLabel("SCAN_FOOTER", footerText, x + 8, footerY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+
+      // Time
+      CreateLabel("SCAN_TIME", TimeToString(TimeCurrent(), TIME_SECONDS),
+                  x + w - 70, footerY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Draw Spread Panel                                                 |
+   //+------------------------------------------------------------------+
+   void DrawSpreadPanel(int x, int y, int w, int h, SPairResult &result) {
+      // Panel background
+      CreatePanel("SPR_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER);
+
+      // Title bar
+      CreatePanel("SPR_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG);
+      CreateLabel("SPR_TITLE", "Spread: " + result.pairName,
+                  x + 8, y + 3, CLR_TITLE_TEXT, FONT_SIZE_TITLE, "Consolas Bold");
+
+      // Stats line
+      int statsY = y + TITLE_HEIGHT + 5;
+      string statsText = "Z: " + DoubleToString(result.zScore, 2) +
+                         " | HR: " + DoubleToString(result.hurstExponent, 4) +
+                         " | LE: " + DoubleToString(result.halfLife, 1);
+      CreateLabel("SPR_STATS", statsText, x + 8, statsY, CLR_TEXT_LIGHT, FONT_SIZE);
+
+      // Chart area
+      int chartX = x + 8;
+      int chartY = statsY + 22;
+      int chartW = w - 50;
+      int chartH = h - 65;
+
+      CreatePanel("SPR_CHART_BG", chartX, chartY, chartW, chartH, CLR_CHART_BG, CLR_CHART_GRID);
+
+      // Draw Z-Score levels
+      int zeroY = chartY + chartH / 2;
+      int upperY = chartY + chartH / 4;
+      int lowerY = chartY + 3 * chartH / 4;
+
+      // Level labels
+      CreateLabel("SPR_L2U", "+2LE", x + w - 38, upperY - 5, CLR_NEON_RED, 7);
+      CreateLabel("SPR_L1U", "+1LE", x + w - 38, (zeroY + upperY) / 2 - 5, CLR_TEXT_DIM, 7);
+      CreateLabel("SPR_MEAN", "Mean", x + w - 38, zeroY - 5, CLR_NEON_YELLOW, 7);
+      CreateLabel("SPR_L1L", "-1LE", x + w - 38, (zeroY + lowerY) / 2 - 5, CLR_TEXT_DIM, 7);
+      CreateLabel("SPR_L2L", "-2LE", x + w - 38, lowerY - 5, CLR_NEON_GREEN, 7);
+
+      // Draw spread line points
+      DrawSpreadChart(chartX, chartY, chartW, chartH);
+
+      // Legend
+      int legendY = y + h - 18;
+      CreateLabel("SPR_LEG", "Green=Oversold | Yellow=Mean | Red=Overbought",
+                  x + 8, legendY, CLR_TEXT_DIM, 7);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Draw Spread Chart Points                                          |
+   //+------------------------------------------------------------------+
+   void DrawSpreadChart(int x, int y, int w, int h) {
+      // Find valid data range
+      int validCount = 0;
+      double minZ = 999, maxZ = -999;
+
+      for(int i = 0; i < m_historySize && i < 60; i++) {
+         if(m_zScoreHistory[i] != 0 || i == 0) {
+            minZ = MathMin(minZ, m_zScoreHistory[i]);
+            maxZ = MathMax(maxZ, m_zScoreHistory[i]);
+            validCount++;
+         }
+      }
+
+      if(validCount < 5) return;
+
+      // Ensure range
+      double range = MathMax(4.0, maxZ - minZ);
+      double mid = (maxZ + minZ) / 2;
+      minZ = mid - range / 2;
+      maxZ = mid + range / 2;
+
+      // Draw points
+      int pointCount = MathMin(validCount, 60);
+      double stepX = (double)(w - 10) / pointCount;
+
+      for(int i = 0; i < pointCount; i++) {
+         int idx = pointCount - 1 - i;
+         double z = m_zScoreHistory[idx];
+
+         int px = x + 5 + (int)(i * stepX);
+         int py = y + 5 + (int)((maxZ - z) / range * (h - 10));
+         py = MathMax(y + 2, MathMin(y + h - 2, py));
+
+         color ptClr = GetZScoreColor(z);
+         CreatePanel("SPR_P" + IntegerToString(i), px, py, 3, 3, ptClr);
       }
    }
 
    //+------------------------------------------------------------------+
-   //| Draw Left Panel (Analytics)                                       |
+   //| Draw Analytics Panel                                              |
    //+------------------------------------------------------------------+
-   void DrawLeftPanel(int chartH, SPairResult &result) {
-      int x = MARGIN;
-      int y = HEADER_HEIGHT + MARGIN;
-      int w = LEFT_PANEL_WIDTH;
-      int h = chartH - HEADER_HEIGHT - BOTTOM_HEIGHT - MARGIN * 3;
-
+   void DrawAnalyticsPanel(int x, int y, int w, int h, SPairResult &result) {
       // Panel background
-      CreateRect("LEFT_BG", 0, y, w + MARGIN, h, CLR_PANEL_BG, CLR_BORDER_GLOW);
+      CreatePanel("ANA_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER);
 
-      // Z-SCORE DISPLAY
-      int secY = y + 8;
-      CreateLabel("L_ZTITLE", "Z-SCORE", x, secY, CLR_NEON_CYAN, 8, "Consolas Bold");
+      // Title bar
+      CreatePanel("ANA_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG);
+      CreateLabel("ANA_TITLE", "Analytics - " + result.pairName,
+                  x + 8, y + 3, CLR_TITLE_TEXT, FONT_SIZE_TITLE, "Consolas Bold");
 
-      secY += 18;
+      // Buttons
+      CreateButton("BTN_TRADE", "TRADE", x + w - 115, y + 2, 50, 18,
+                   C'30,80,120', CLR_NEON_CYAN, FONT_SIZE_SMALL);
+      CreateButton("BTN_CLOSE", "CLOSE", x + w - 58, y + 2, 50, 18,
+                   C'120,40,40', CLR_NEON_RED, FONT_SIZE_SMALL);
+
+      int contentY = y + TITLE_HEIGHT + 8;
+      int col1 = x + 10;
+      int col2 = x + 130;
+      int col3 = x + 220;
+      int col4 = x + 330;
+      int rowH = 18;
+
+      // Row 1: Z-Score & Signal
+      CreateLabel("ANA_ZL", "Z-Score:", col1, contentY, CLR_TEXT_DIM, FONT_SIZE);
       color zClr = GetZScoreColor(result.zScore);
-      string zText = (result.zScore > 0 ? "+" : "") + DoubleToString(result.zScore, 3);
-      CreateLabel("L_ZVALUE", zText, x, secY, zClr, 22, "Consolas Bold");
+      CreateLabel("ANA_ZV", DoubleToString(result.zScore, 3), col2, contentY, zClr, FONT_SIZE, "Consolas Bold");
 
-      // Zone text
-      secY += 32;
-      string zoneText = "NEUTRAL";
-      color zoneClr = CLR_TEXT_DIM;
-      if(result.zScore >= 2.5 || result.zScore <= -2.5) { zoneText = "⚠ STOP ZONE"; zoneClr = CLR_NEON_RED; }
-      else if(result.zScore >= 2.0) { zoneText = "▼ SHORT ZONE"; zoneClr = CLR_NEON_ORANGE; }
-      else if(result.zScore <= -2.0) { zoneText = "▲ LONG ZONE"; zoneClr = CLR_NEON_GREEN; }
-      else if(MathAbs(result.zScore) <= 0.5) { zoneText = "◆ EXIT ZONE"; zoneClr = CLR_NEON_YELLOW; }
-      CreateLabel("L_ZONE", zoneText, x, secY, zoneClr, 9, "Consolas Bold");
+      CreateLabel("ANA_SL", "Signal:", col3, contentY, CLR_TEXT_DIM, FONT_SIZE);
+      string sigText = result.signal > 0 ? "LONG" : (result.signal < 0 ? "SHORT" : "WAIT");
+      color sigClr = result.signal > 0 ? CLR_NEON_GREEN : (result.signal < 0 ? CLR_NEON_RED : CLR_TEXT_DIM);
+      CreateLabel("ANA_SV", sigText, col4, contentY, sigClr, FONT_SIZE, "Consolas Bold");
+      contentY += rowH;
 
-      // Separator
-      secY += 18;
-      CreateLine("L_SEP1", x, secY, x + w - 20, secY, CLR_BORDER_GLOW);
+      // Row 2: Hurst & VR
+      CreateLabel("ANA_HL", "Hurst:", col1, contentY, CLR_TEXT_DIM, FONT_SIZE);
+      color hClr = result.hurstExponent < 0.45 ? CLR_NEON_GREEN :
+                  (result.hurstExponent < 0.55 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("ANA_HV", DoubleToString(result.hurstExponent, 3), col2, contentY, hClr, FONT_SIZE);
 
-      // SIGNAL STRENGTH
-      secY += 10;
-      CreateLabel("L_SIGTITLE", "SIGNAL STRENGTH", x, secY, CLR_NEON_MAGENTA, 8, "Consolas Bold");
+      CreateLabel("ANA_VRL", "VR Test:", col3, contentY, CLR_TEXT_DIM, FONT_SIZE);
+      color vrClr = result.varianceRatio < 0.9 ? CLR_NEON_GREEN :
+                   (result.varianceRatio < 1.1 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("ANA_VRV", DoubleToString(result.varianceRatio, 3), col4, contentY, vrClr, FONT_SIZE);
+      contentY += rowH;
 
-      secY += 16;
-      // Strength bar background
-      CreateRect("L_SIGBAR_BG", x, secY, w - 20, 8, C'30,35,45');
-      // Strength bar fill
-      int fillW = (int)((w - 20) * m_signalStrength / 100.0);
-      color barClr = m_signalStrength >= 70 ? CLR_NEON_GREEN : (m_signalStrength >= 40 ? CLR_NEON_YELLOW : CLR_NEON_RED);
-      CreateRect("L_SIGBAR", x, secY, fillW, 8, barClr);
+      // Row 3: Correlation & Stability
+      CreateLabel("ANA_CL", "Correl:", col1, contentY, CLR_TEXT_DIM, FONT_SIZE);
+      color cClr = MathAbs(result.priceCorrelation) >= 0.7 ? CLR_NEON_GREEN : CLR_NEON_YELLOW;
+      CreateLabel("ANA_CV", DoubleToString(result.priceCorrelation, 3), col2, contentY, cClr, FONT_SIZE);
 
-      secY += 12;
-      CreateLabel("L_SIGVAL", DoubleToString(m_signalStrength, 0) + "%", x, secY, barClr, 9, "Consolas Bold");
+      CreateLabel("ANA_STL", "Stability:", col3, contentY, CLR_TEXT_DIM, FONT_SIZE);
+      color stClr = result.spreadStability >= 70 ? CLR_NEON_GREEN :
+                   (result.spreadStability >= 40 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("ANA_STV", DoubleToString(result.spreadStability, 0) + "%", col4, contentY, stClr, FONT_SIZE);
+      contentY += rowH;
 
-      // REGIME
-      secY += 20;
-      CreateLabel("L_REGTITLE", "REGIME", x, secY, CLR_NEON_BLUE, 8, "Consolas Bold");
-      secY += 14;
+      // Row 4: Quality & Kelly
+      CreateLabel("ANA_QL", "Quality:", col1, contentY, CLR_TEXT_DIM, FONT_SIZE);
+      color qClr = result.qualityScore >= 70 ? CLR_NEON_GREEN :
+                  (result.qualityScore >= 50 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("ANA_QV", IntegerToString(result.qualityScore) + "/100", col2, contentY, qClr, FONT_SIZE, "Consolas Bold");
 
-      string regText = "";
-      color regClr = CLR_TEXT_DIM;
-      switch(m_currentRegime) {
-         case REGIME_MEAN_REVERT: regText = "● MEAN REVERT"; regClr = CLR_NEON_GREEN; break;
-         case REGIME_TRENDING: regText = "◆ TRENDING"; regClr = CLR_NEON_RED; break;
-         case REGIME_VOLATILE: regText = "▲ VOLATILE"; regClr = CLR_NEON_ORANGE; break;
-         default: regText = "○ CONSOLIDATION"; regClr = CLR_TEXT_DIM;
-      }
-      CreateLabel("L_REGIME", regText, x, secY, regClr, 9, "Consolas Bold");
+      CreateLabel("ANA_KL", "Kelly:", col3, contentY, CLR_TEXT_DIM, FONT_SIZE);
+      CreateLabel("ANA_KV", DoubleToString(result.kellyFraction * 100, 1) + "%", col4, contentY, CLR_NEON_CYAN, FONT_SIZE);
+      contentY += rowH;
 
-      // Separator
-      secY += 18;
-      CreateLine("L_SEP2", x, secY, x + w - 20, secY, CLR_BORDER_GLOW);
+      // Row 5: Half-Life & R²
+      CreateLabel("ANA_HLL", "Half-Life:", col1, contentY, CLR_TEXT_DIM, FONT_SIZE);
+      color hlClr = (result.halfLife > 5 && result.halfLife < 50) ? CLR_NEON_GREEN : CLR_NEON_YELLOW;
+      CreateLabel("ANA_HLV", DoubleToString(result.halfLife, 1) + " bars", col2, contentY, hlClr, FONT_SIZE);
 
-      // QUANT METRICS
-      secY += 10;
-      CreateLabel("L_METR", "QUANT METRICS", x, secY, CLR_NEON_YELLOW, 8, "Consolas Bold");
-      secY += 16;
+      CreateLabel("ANA_R2L", "R²:", col3, contentY, CLR_TEXT_DIM, FONT_SIZE);
+      color r2Clr = result.rSquared >= 0.8 ? CLR_NEON_GREEN :
+                   (result.rSquared >= 0.6 ? CLR_NEON_YELLOW : CLR_TEXT_DIM);
+      CreateLabel("ANA_R2V", DoubleToString(result.rSquared * 100, 1) + "%", col4, contentY, r2Clr, FONT_SIZE);
+      contentY += rowH;
 
-      int labelX = x;
-      int valX = x + 85;
+      // Row 6: Cointegration status
+      CreateLabel("ANA_COINTL", "Cointegration:", col1, contentY, CLR_TEXT_DIM, FONT_SIZE);
+      string cointText = result.isCointegrated ? "YES" : "NO";
+      color cointClr = result.isCointegrated ? CLR_NEON_GREEN : CLR_NEON_RED;
+      CreateLabel("ANA_COINTV", cointText, col2, contentY, cointClr, FONT_SIZE, "Consolas Bold");
 
-      // Hurst
-      color hClr = result.hurstExponent < 0.45 ? CLR_NEON_GREEN : (result.hurstExponent < 0.55 ? CLR_NEON_YELLOW : CLR_NEON_RED);
-      CreateLabel("L_M_HL", "Hurst:", labelX, secY, CLR_TEXT_DIM, 7);
-      CreateLabel("L_M_HV", DoubleToString(result.hurstExponent, 3), valX, secY, hClr, 7, "Consolas Bold");
-      secY += ROW_HEIGHT;
+      CreateLabel("ANA_ZCL", "Zero Cross:", col3, contentY, CLR_TEXT_DIM, FONT_SIZE);
+      CreateLabel("ANA_ZCV", IntegerToString(result.zeroCrossings), col4, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      contentY += rowH + 5;
 
-      // VR Test
-      color vrClr = result.varianceRatio < 0.9 ? CLR_NEON_GREEN : (result.varianceRatio < 1.1 ? CLR_NEON_YELLOW : CLR_NEON_RED);
-      CreateLabel("L_M_VRL", "VR Test:", labelX, secY, CLR_TEXT_DIM, 7);
-      CreateLabel("L_M_VRV", DoubleToString(result.varianceRatio, 3), valX, secY, vrClr, 7, "Consolas Bold");
-      secY += ROW_HEIGHT;
+      // Recommendation
+      string recText = "";
+      color recClr = CLR_TEXT_DIM;
 
-      // Correlation
-      color corrClr = MathAbs(result.priceCorrelation) >= 0.7 ? CLR_NEON_GREEN : CLR_NEON_YELLOW;
-      CreateLabel("L_M_CRL", "Correl:", labelX, secY, CLR_TEXT_DIM, 7);
-      CreateLabel("L_M_CRV", DoubleToString(result.priceCorrelation, 3), valX, secY, corrClr, 7, "Consolas Bold");
-      secY += ROW_HEIGHT;
-
-      // Autocorr
-      color acClr = result.autocorrelation > 0.3 ? CLR_NEON_GREEN : CLR_NEON_YELLOW;
-      CreateLabel("L_M_ACL", "AutoCorr:", labelX, secY, CLR_TEXT_DIM, 7);
-      CreateLabel("L_M_ACV", DoubleToString(result.autocorrelation, 3), valX, secY, acClr, 7, "Consolas Bold");
-      secY += ROW_HEIGHT;
-
-      // Stability
-      color stClr = result.spreadStability >= 70 ? CLR_NEON_GREEN : (result.spreadStability >= 40 ? CLR_NEON_YELLOW : CLR_NEON_RED);
-      CreateLabel("L_M_STL", "Stability:", labelX, secY, CLR_TEXT_DIM, 7);
-      CreateLabel("L_M_STV", DoubleToString(result.spreadStability, 0) + "%", valX, secY, stClr, 7, "Consolas Bold");
-      secY += ROW_HEIGHT;
-
-      // Quality Score
-      color qClr = result.qualityScore >= 70 ? CLR_NEON_GREEN : (result.qualityScore >= 50 ? CLR_NEON_YELLOW : CLR_NEON_RED);
-      CreateLabel("L_M_QL", "Quality:", labelX, secY, CLR_TEXT_DIM, 7);
-      CreateLabel("L_M_QV", IntegerToString(result.qualityScore) + "/100", valX, secY, qClr, 7, "Consolas Bold");
-      secY += ROW_HEIGHT;
-
-      // Kelly
-      CreateLabel("L_M_KL", "Kelly:", labelX, secY, CLR_TEXT_DIM, 7);
-      CreateLabel("L_M_KV", DoubleToString(result.kellyFraction * 100, 1) + "%", valX, secY, CLR_NEON_CYAN, 7, "Consolas Bold");
-      secY += ROW_HEIGHT;
-
-      // Opt Entry
-      CreateLabel("L_M_OEL", "Opt Entry:", labelX, secY, CLR_TEXT_DIM, 7);
-      CreateLabel("L_M_OEV", "Z=" + DoubleToString(result.optimalEntryZ, 2), valX, secY, CLR_NEON_CYAN, 7, "Consolas Bold");
-
-      // Separator
-      secY += 20;
-      CreateLine("L_SEP3", x, secY, x + w - 20, secY, CLR_BORDER_GLOW);
-
-      // TRADE RECOMMENDATION
-      secY += 10;
-      CreateLabel("L_RECTITLE", "RECOMMENDATION", x, secY, CLR_TEXT_WHITE, 8, "Consolas Bold");
-      secY += 16;
-
-      // Calculate recommendation
       bool goodHurst = result.hurstExponent < 0.5;
       bool goodVR = result.varianceRatio < 1.0;
       bool goodCorr = MathAbs(result.priceCorrelation) >= 0.6;
       bool goodStab = result.spreadStability >= 50;
-      bool strongZ = MathAbs(result.zScore) >= result.optimalEntryZ;
       int factors = (goodHurst?1:0) + (goodVR?1:0) + (goodCorr?1:0) + (goodStab?1:0);
 
-      string recText = "";
-      color recClr = CLR_TEXT_DIM;
-
-      if(factors >= 3 && strongZ && result.qualityScore >= 70) {
-         recText = result.zScore > 0 ? "★★★ STRONG SHORT" : "★★★ STRONG LONG";
+      if(factors >= 3 && result.qualityScore >= 70 && MathAbs(result.zScore) >= 2.0) {
+         recText = result.zScore > 0 ? ">>> STRONG SHORT <<<" : ">>> STRONG LONG <<<";
          recClr = result.zScore > 0 ? CLR_NEON_RED : CLR_NEON_GREEN;
       }
       else if(factors >= 2 && result.qualityScore >= 50 && MathAbs(result.zScore) >= 1.5) {
-         recText = result.zScore > 0 ? "★★ SHORT SETUP" : "★★ LONG SETUP";
+         recText = result.zScore > 0 ? ">> SHORT SETUP <<" : ">> LONG SETUP <<";
          recClr = CLR_NEON_YELLOW;
       }
       else if(!goodHurst && !goodVR) {
-         recText = "⚠ AVOID - TRENDING";
+         recText = "! AVOID - TRENDING !";
          recClr = CLR_NEON_RED;
       }
-      else if(!goodStab) {
-         recText = "⚠ AVOID - UNSTABLE";
-         recClr = CLR_NEON_ORANGE;
-      }
       else {
-         recText = "○ WAIT FOR SETUP";
+         recText = "- WAIT FOR SETUP -";
          recClr = CLR_TEXT_DIM;
       }
 
-      CreateLabel("L_REC", recText, x, secY, recClr, 10, "Consolas Bold");
-
-      // BUTTONS at bottom of left panel
-      secY = y + h - 35;
-      CreateButton("BTN_SCAN", "SCAN", x, secY, 60, 22, C'20,60,35', CLR_NEON_GREEN, 8);
-      CreateButton("BTN_TRADE", "TRADE", x + 68, secY, 60, 22, C'20,40,80', CLR_NEON_CYAN, 8);
-      CreateButton("BTN_CLOSE", "CLOSE", x + 136, secY, 60, 22, C'80,30,30', CLR_NEON_RED, 8);
+      CreateLabel("ANA_REC", recText, x + w/2 - 80, contentY, recClr, FONT_SIZE_TITLE, "Consolas Bold");
    }
 
    //+------------------------------------------------------------------+
-   //| Draw Bottom Panel                                                 |
+   //| Handle Click - returns action code and fills pair info            |
    //+------------------------------------------------------------------+
-   void DrawBottom(int chartW, int chartH, SPairResult &result) {
-      int x = LEFT_PANEL_WIDTH + MARGIN * 2;
-      int y = chartH - BOTTOM_HEIGHT;
-      int w = chartW - LEFT_PANEL_WIDTH - MARGIN * 3;
-      int h = BOTTOM_HEIGHT;
-
-      // Background
-      CreateRect("BOT_BG", x - MARGIN, y, w + MARGIN * 2, h, CLR_PANEL_BG, CLR_BORDER_GLOW);
-
-      // Split into 3 sections
-      int sec1W = (int)(w * 0.40);  // Spread mini-chart
-      int sec2W = (int)(w * 0.30);  // Performance
-      int sec3W = w - sec1W - sec2W; // Pair info
-
-      // SECTION 1: Spread Chart
-      int s1x = x;
-      CreateLabel("BOT_S1T", "SPREAD: " + result.pairName, s1x, y + 5, CLR_NEON_CYAN, 8, "Consolas Bold");
-      CreateLabel("BOT_S1B", "β=" + DoubleToString(result.beta, 4) + "  μ=" + DoubleToString(result.spreadMean, 5),
-                  s1x, y + 18, CLR_TEXT_DIM, 7);
-
-      // Mini spread visualization
-      DrawMiniSpread(s1x, y + 35, sec1W - 10, h - 45, result);
-
-      // SECTION 2: Performance
-      int s2x = x + sec1W + 10;
-      CreateLabel("BOT_S2T", "PERFORMANCE", s2x, y + 5, CLR_NEON_YELLOW, 8, "Consolas Bold");
-
-      int perfY = y + 22;
-
-      // Win Rate
-      color wrClr = m_perfStats.winRate >= 55 ? CLR_NEON_GREEN : (m_perfStats.winRate >= 45 ? CLR_NEON_YELLOW : CLR_NEON_RED);
-      CreateLabel("BOT_WRL", "Win Rate:", s2x, perfY, CLR_TEXT_DIM, 7);
-      CreateLabel("BOT_WRV", DoubleToString(m_perfStats.winRate, 1) + "%", s2x + 70, perfY, wrClr, 7, "Consolas Bold");
-      perfY += 14;
-
-      // P&L
-      color plClr = m_perfStats.totalPL >= 0 ? CLR_NEON_GREEN : CLR_NEON_RED;
-      string plStr = (m_perfStats.totalPL >= 0 ? "+" : "") + DoubleToString(m_perfStats.totalPL, 2);
-      CreateLabel("BOT_PLL", "P&L:", s2x, perfY, CLR_TEXT_DIM, 7);
-      CreateLabel("BOT_PLV", "$" + plStr, s2x + 70, perfY, plClr, 7, "Consolas Bold");
-      perfY += 14;
-
-      // Trades
-      CreateLabel("BOT_TRL", "Trades:", s2x, perfY, CLR_TEXT_DIM, 7);
-      CreateLabel("BOT_TRV", IntegerToString(m_perfStats.executedTrades), s2x + 70, perfY, CLR_TEXT_LIGHT, 7, "Consolas Bold");
-      perfY += 14;
-
-      // Profit Factor
-      color pfClr = m_perfStats.profitFactor >= 1.5 ? CLR_NEON_GREEN : (m_perfStats.profitFactor >= 1.0 ? CLR_NEON_YELLOW : CLR_NEON_RED);
-      CreateLabel("BOT_PFL", "PF:", s2x, perfY, CLR_TEXT_DIM, 7);
-      CreateLabel("BOT_PFV", DoubleToString(m_perfStats.profitFactor, 2), s2x + 70, perfY, pfClr, 7, "Consolas Bold");
-      perfY += 14;
-
-      // Sharpe
-      color srClr = m_perfStats.sharpeRatio >= 1.5 ? CLR_NEON_GREEN : (m_perfStats.sharpeRatio >= 0.5 ? CLR_NEON_YELLOW : CLR_NEON_RED);
-      CreateLabel("BOT_SRL", "Sharpe:", s2x, perfY, CLR_TEXT_DIM, 7);
-      CreateLabel("BOT_SRV", DoubleToString(m_perfStats.sharpeRatio, 2), s2x + 70, perfY, srClr, 7, "Consolas Bold");
-      perfY += 14;
-
-      // Max DD
-      color ddClr = m_perfStats.maxDrawdown <= 5 ? CLR_NEON_GREEN : (m_perfStats.maxDrawdown <= 15 ? CLR_NEON_YELLOW : CLR_NEON_RED);
-      CreateLabel("BOT_DDL", "Max DD:", s2x, perfY, CLR_TEXT_DIM, 7);
-      CreateLabel("BOT_DDV", DoubleToString(m_perfStats.maxDrawdown, 1) + "%", s2x + 70, perfY, ddClr, 7, "Consolas Bold");
-
-      // SECTION 3: Selected Pair Info
-      int s3x = x + sec1W + sec2W + 20;
-      CreateLabel("BOT_S3T", "SELECTED PAIR", s3x, y + 5, CLR_NEON_MAGENTA, 8, "Consolas Bold");
-
-      int infoY = y + 22;
-      CreateLabel("BOT_PN", result.pairName, s3x, infoY, CLR_TEXT_WHITE, 9, "Consolas Bold");
-      infoY += 16;
-
-      // Signal
-      color sigClr = result.signal > 0 ? CLR_NEON_GREEN : (result.signal < 0 ? CLR_NEON_RED : CLR_TEXT_DIM);
-      CreateLabel("BOT_SIG", GetSignalText(result.signal, result.zScore), s3x, infoY, sigClr, 9, "Consolas Bold");
-      infoY += 16;
-
-      // Stats
-      CreateLabel("BOT_R2L", "R²: " + DoubleToString(result.rSquared, 3), s3x, infoY, CLR_TEXT_LIGHT, 7);
-      infoY += 13;
-      CreateLabel("BOT_HLL", "Half-Life: " + DoubleToString(result.halfLife, 1) + " bars", s3x, infoY, CLR_TEXT_LIGHT, 7);
-      infoY += 13;
-      CreateLabel("BOT_ZCL", "Zero Cross: " + IntegerToString(result.zeroCrossings), s3x, infoY, CLR_TEXT_LIGHT, 7);
-      infoY += 13;
-
-      // Cointegration status
-      string cointText = result.isCointegrated ? "✓ COINTEGRATED" : "✗ NOT COINTEGRATED";
-      color cointClr = result.isCointegrated ? CLR_NEON_GREEN : CLR_NEON_RED;
-      CreateLabel("BOT_COINT", cointText, s3x, infoY, cointClr, 7, "Consolas Bold");
-   }
-
-   //+------------------------------------------------------------------+
-   //| Draw Mini Spread Chart                                            |
-   //+------------------------------------------------------------------+
-   void DrawMiniSpread(int x, int y, int w, int h, SPairResult &result) {
-      // Chart background
-      CreateRect("MINI_BG", x, y, w, h, C'20,22,30', CLR_BORDER_GLOW);
-
-      // Find min/max for scaling
-      double minVal = 999999, maxVal = -999999;
-      int validPoints = 0;
-
-      for(int i = 0; i < m_historySize && i < 60; i++) {
-         if(m_zScoreHistory[i] != 0 || i == 0) {
-            minVal = MathMin(minVal, m_zScoreHistory[i]);
-            maxVal = MathMax(maxVal, m_zScoreHistory[i]);
-            validPoints++;
-         }
-      }
-
-      if(validPoints < 5) {
-         CreateLabel("MINI_NO", "Collecting data...", x + 10, y + h/2 - 5, CLR_TEXT_DIM, 7);
-         return;
-      }
-
-      // Ensure range
-      double range = maxVal - minVal;
-      if(range < 0.5) {
-         minVal -= 0.5;
-         maxVal += 0.5;
-         range = 1.0;
-      }
-
-      // Draw reference lines
-      int zeroY = y + (int)((maxVal - 0) / range * (h - 10)) + 5;
-      int upper2Y = y + (int)((maxVal - 2.0) / range * (h - 10)) + 5;
-      int lower2Y = y + (int)((maxVal - (-2.0)) / range * (h - 10)) + 5;
-
-      // Clamp to chart area
-      zeroY = MathMax(y + 2, MathMin(y + h - 2, zeroY));
-      upper2Y = MathMax(y + 2, MathMin(y + h - 2, upper2Y));
-      lower2Y = MathMax(y + 2, MathMin(y + h - 2, lower2Y));
-
-      CreateLine("MINI_Z0", x + 2, zeroY, x + w - 2, zeroY, CLR_TEXT_DARK);
-      CreateLine("MINI_Z2U", x + 2, upper2Y, x + w - 2, upper2Y, C'60,30,30');
-      CreateLine("MINI_Z2L", x + 2, lower2Y, x + w - 2, lower2Y, C'30,60,30');
-
-      // Draw Z labels
-      CreateLabel("MINI_L0", "0", x + w - 12, zeroY - 4, CLR_TEXT_DARK, 6);
-      CreateLabel("MINI_L2U", "+2", x + w - 15, upper2Y - 4, CLR_NEON_RED, 6);
-      CreateLabel("MINI_L2L", "-2", x + w - 15, lower2Y - 4, CLR_NEON_GREEN, 6);
-
-      // Draw spread line as points
-      int pointCount = MathMin(validPoints, 60);
-      double stepX = (double)(w - 10) / pointCount;
-
-      for(int i = 0; i < pointCount - 1; i++) {
-         int idx = pointCount - 1 - i;
-         double val = m_zScoreHistory[idx];
-
-         int px = x + 5 + (int)(i * stepX);
-         int py = y + 5 + (int)((maxVal - val) / range * (h - 10));
-         py = MathMax(y + 2, MathMin(y + h - 2, py));
-
-         color ptClr = GetZScoreColor(val);
-         CreateRect("MINI_P" + IntegerToString(i), px, py - 1, 2, 2, ptClr);
-      }
-
-      // Current value marker
-      int currPx = x + w - 10;
-      int currPy = y + 5 + (int)((maxVal - m_zScoreHistory[0]) / range * (h - 10));
-      currPy = MathMax(y + 2, MathMin(y + h - 2, currPy));
-      CreateRect("MINI_CURR", currPx - 2, currPy - 2, 5, 5, CLR_TEXT_WHITE);
-   }
-
-   //+------------------------------------------------------------------+
-   //| Handle click events                                               |
-   //+------------------------------------------------------------------+
-   bool OnClick(string objName) {
-      if(StringFind(objName, m_prefix) < 0) return false;
+   int HandleClick(string objName, string &symbolA, string &symbolB, double &beta) {
+      if(StringFind(objName, m_prefix) < 0) return 0;
 
       string name = StringSubstr(objName, StringLen(m_prefix));
 
-      if(name == "BTN_SCAN") {
-         // Trigger scan - handled by main EA
-         return true;
+      if(name == "BTN_SCAN") return 1;
+      if(name == "BTN_TRADE") {
+         if(m_selectedRow >= 0 && m_selectedRow < m_resultCount) {
+            symbolA = m_scanResults[m_selectedRow].symbolA;
+            symbolB = m_scanResults[m_selectedRow].symbolB;
+            beta = m_scanResults[m_selectedRow].beta;
+         }
+         return 2;
       }
-      else if(name == "BTN_TRADE") {
-         // Execute trade - handled by main EA
-         return true;
-      }
-      else if(name == "BTN_CLOSE") {
-         // Close all - handled by main EA
-         return true;
-      }
+      if(name == "BTN_CLOSE") return 3;
 
-      // Check for row selection
-      for(int i = 0; i < 4; i++) {
-         if(StringFind(name, "SC_R" + IntegerToString(i) + "_") >= 0) {
+      // Row selection
+      for(int i = 0; i < 10; i++) {
+         if(StringFind(name, "R" + IntegerToString(i) + "_") >= 0) {
             int newSel = i + m_scrollOffset;
             if(newSel < m_resultCount) {
                m_selectedRow = newSel;
+               symbolA = m_scanResults[m_selectedRow].symbolA;
+               symbolB = m_scanResults[m_selectedRow].symbolB;
+               beta = m_scanResults[m_selectedRow].beta;
                if(m_resultCount > 0) {
                   m_currentRegime = DetectRegime(m_scanResults[m_selectedRow]);
                   m_signalStrength = CalculateSignalStrength(m_scanResults[m_selectedRow]);
                }
-               Draw();
-               return true;
+               return 4;
             }
          }
       }
 
+      return 0;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get Selected Pair (SPairResult version)                           |
+   //+------------------------------------------------------------------+
+   bool GetSelectedPair(SPairResult &result) {
+      if(m_selectedRow >= 0 && m_selectedRow < m_resultCount) {
+         result = m_scanResults[m_selectedRow];
+         return true;
+      }
       return false;
    }
 
    //+------------------------------------------------------------------+
-   //| Handle keyboard events                                            |
+   //| Get Selected Pair (4 parameter version)                           |
    //+------------------------------------------------------------------+
-   bool OnKey(int key) {
-      // Arrow up/down for selection
-      if(key == 38) { // Up
-         if(m_selectedRow > 0) {
-            m_selectedRow--;
-            if(m_selectedRow < m_scrollOffset) m_scrollOffset = m_selectedRow;
-            Draw();
-            return true;
-         }
+   bool GetSelectedPair(string &symbolA, string &symbolB, double &beta, double &zScore) {
+      if(m_selectedRow >= 0 && m_selectedRow < m_resultCount) {
+         symbolA = m_scanResults[m_selectedRow].symbolA;
+         symbolB = m_scanResults[m_selectedRow].symbolB;
+         beta = m_scanResults[m_selectedRow].beta;
+         zScore = m_scanResults[m_selectedRow].zScore;
+         return true;
       }
-      else if(key == 40) { // Down
-         if(m_selectedRow < m_resultCount - 1) {
-            m_selectedRow++;
-            if(m_selectedRow >= m_scrollOffset + 4) m_scrollOffset = m_selectedRow - 3;
-            Draw();
-            return true;
-         }
-      }
-
       return false;
    }
 
    //+------------------------------------------------------------------+
-   //| Add trade to performance stats                                    |
+   //| Configure Alerts                                                  |
+   //+------------------------------------------------------------------+
+   void ConfigureAlerts(bool enabled, double zThreshold, double strengthThreshold) {
+      m_alertsEnabled = enabled;
+      m_alertZThreshold = zThreshold;
+      m_alertStrengthThreshold = strengthThreshold;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Are Alerts Enabled                                                |
+   //+------------------------------------------------------------------+
+   bool AreAlertsEnabled() {
+      return m_alertsEnabled;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Sort By Z-Score                                                   |
+   //+------------------------------------------------------------------+
+   void SortByZScore() {
+      for(int i = 0; i < m_resultCount - 1; i++) {
+         for(int j = 0; j < m_resultCount - i - 1; j++) {
+            if(MathAbs(m_scanResults[j].zScore) < MathAbs(m_scanResults[j + 1].zScore)) {
+               SPairResult temp = m_scanResults[j];
+               m_scanResults[j] = m_scanResults[j + 1];
+               m_scanResults[j + 1] = temp;
+            }
+         }
+      }
+   }
+
+   //+------------------------------------------------------------------+
+   //| Record Trade Result                                               |
+   //+------------------------------------------------------------------+
+   void RecordTradeResult(double profit) {
+      bool isWin = profit >= 0;
+      AddTradeResult(profit, isWin);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Add Trade Result                                                  |
    //+------------------------------------------------------------------+
    void AddTradeResult(double profit, bool isWin) {
       m_perfStats.executedTrades++;
@@ -939,202 +824,14 @@ public:
          (double)m_perfStats.winningTrades / m_perfStats.executedTrades * 100 : 0;
 
       m_perfStats.profitFactor = m_perfStats.grossLoss > 0 ?
-         m_perfStats.grossProfit / m_perfStats.grossLoss :
-         (m_perfStats.grossProfit > 0 ? 99.9 : 1.0);
-
-      m_perfStats.avgWin = m_perfStats.winningTrades > 0 ?
-         m_perfStats.grossProfit / m_perfStats.winningTrades : 0;
-
-      m_perfStats.avgLoss = m_perfStats.losingTrades > 0 ?
-         m_perfStats.grossLoss / m_perfStats.losingTrades : 0;
-
-      m_perfStats.expectancy = m_perfStats.avgWin * (m_perfStats.winRate / 100) -
-                               m_perfStats.avgLoss * (1 - m_perfStats.winRate / 100);
+         m_perfStats.grossProfit / m_perfStats.grossLoss : 1.0;
    }
 
    //+------------------------------------------------------------------+
-   //| Get selected pair                                                 |
-   //+------------------------------------------------------------------+
-   bool GetSelectedPair(SPairResult &result) {
-      if(m_selectedRow >= 0 && m_selectedRow < m_resultCount) {
-         result = m_scanResults[m_selectedRow];
-         return true;
-      }
-      return false;
-   }
-
-   //+------------------------------------------------------------------+
-   //| Get button state                                                  |
-   //+------------------------------------------------------------------+
-   string GetClickedButton() {
-      // Check button states
-      if(ObjectGetInteger(0, m_prefix + "BTN_SCAN", OBJPROP_STATE) == 1) {
-         ObjectSetInteger(0, m_prefix + "BTN_SCAN", OBJPROP_STATE, 0);
-         return "SCAN";
-      }
-      if(ObjectGetInteger(0, m_prefix + "BTN_TRADE", OBJPROP_STATE) == 1) {
-         ObjectSetInteger(0, m_prefix + "BTN_TRADE", OBJPROP_STATE, 0);
-         return "TRADE";
-      }
-      if(ObjectGetInteger(0, m_prefix + "BTN_CLOSE", OBJPROP_STATE) == 1) {
-         ObjectSetInteger(0, m_prefix + "BTN_CLOSE", OBJPROP_STATE, 0);
-         return "CLOSE";
-      }
-      return "";
-   }
-
-   //+------------------------------------------------------------------+
-   //| Get top pairs for correlation                                     |
-   //+------------------------------------------------------------------+
-   int GetTopPairs(string &pairs[], int maxPairs = 6) {
-      int count = MathMin(maxPairs, m_resultCount);
-      ArrayResize(pairs, count);
-
-      for(int i = 0; i < count; i++) {
-         pairs[i] = m_scanResults[i].pairName;
-         if(i < 6) m_corrPairs[i] = pairs[i];
-      }
-
-      return count;
-   }
-
-   //+------------------------------------------------------------------+
-   //| Reset stats                                                       |
-   //+------------------------------------------------------------------+
-   void ResetStats() {
-      ZeroMemory(m_perfStats);
-      m_perfStats.profitFactor = 1.0;
-   }
-
-   // ============================================================
-   // COMPATIBILITY METHODS (for main EA interface)
-   // ============================================================
-
-   //+------------------------------------------------------------------+
-   //| Set Position (stub - not used in overlay mode)                    |
-   //+------------------------------------------------------------------+
-   void SetPosition(int x, int y) {
-      // Not used in overlay mode - panels positioned dynamically
-   }
-
-   //+------------------------------------------------------------------+
-   //| Configure Alerts                                                  |
-   //+------------------------------------------------------------------+
-   void ConfigureAlerts(bool enabled, double zThreshold, double strengthThreshold) {
-      m_alertsEnabled = enabled;
-      // Store thresholds for alert processing
-   }
-
-   //+------------------------------------------------------------------+
-   //| Are Alerts Enabled                                                |
-   //+------------------------------------------------------------------+
-   bool AreAlertsEnabled() {
-      return m_alertsEnabled;
-   }
-
-   //+------------------------------------------------------------------+
-   //| Sort By Z-Score (sort the results array)                          |
-   //+------------------------------------------------------------------+
-   void SortByZScore() {
-      // Sort by absolute Z-Score descending
-      for(int i = 0; i < m_resultCount - 1; i++) {
-         for(int j = 0; j < m_resultCount - i - 1; j++) {
-            if(MathAbs(m_scanResults[j].zScore) < MathAbs(m_scanResults[j + 1].zScore)) {
-               SPairResult temp = m_scanResults[j];
-               m_scanResults[j] = m_scanResults[j + 1];
-               m_scanResults[j + 1] = temp;
-            }
-         }
-      }
-   }
-
-   //+------------------------------------------------------------------+
-   //| Update Spread History (array version)                             |
-   //+------------------------------------------------------------------+
-   void UpdateSpreadHistory(double &spread[], double &zScore[], int size) {
-      // Copy arrays to internal storage
-      int copySize = MathMin(size, m_historySize);
-      for(int i = 0; i < copySize; i++) {
-         m_spreadHistory[i] = spread[i];
-         m_zScoreHistory[i] = zScore[i];
-      }
-   }
-
-   //+------------------------------------------------------------------+
-   //| Record Trade Result                                               |
-   //+------------------------------------------------------------------+
-   void RecordTradeResult(double profit) {
-      bool isWin = profit >= 0;
-      AddTradeResult(profit, isWin);
-   }
-
-   //+------------------------------------------------------------------+
-   //| Update Info (positions, P&L, etc.)                                |
+   //| Update Info                                                       |
    //+------------------------------------------------------------------+
    void UpdateInfo(double unrealizedPL, int positionCount, double maxDD, double activeBeta) {
       m_perfStats.maxDrawdown = maxDD;
-      // Other info can be displayed if needed
-   }
-
-   //+------------------------------------------------------------------+
-   //| Handle Click - returns action code and fills pair info            |
-   //+------------------------------------------------------------------+
-   int HandleClick(string objName, string &symbolA, string &symbolB, double &beta) {
-      if(StringFind(objName, m_prefix) < 0) return 0;
-
-      string name = StringSubstr(objName, StringLen(m_prefix));
-
-      // Button clicks
-      if(name == "BTN_SCAN") {
-         return 1;  // Scan
-      }
-      else if(name == "BTN_TRADE") {
-         // Fill selected pair info
-         if(m_selectedRow >= 0 && m_selectedRow < m_resultCount) {
-            symbolA = m_scanResults[m_selectedRow].symbolA;
-            symbolB = m_scanResults[m_selectedRow].symbolB;
-            beta = m_scanResults[m_selectedRow].beta;
-         }
-         return 2;  // Execute
-      }
-      else if(name == "BTN_CLOSE") {
-         return 3;  // Close all
-      }
-
-      // Row selection
-      for(int i = 0; i < 4; i++) {
-         if(StringFind(name, "SC_R" + IntegerToString(i) + "_") >= 0) {
-            int newSel = i + m_scrollOffset;
-            if(newSel < m_resultCount) {
-               m_selectedRow = newSel;
-               symbolA = m_scanResults[m_selectedRow].symbolA;
-               symbolB = m_scanResults[m_selectedRow].symbolB;
-               beta = m_scanResults[m_selectedRow].beta;
-
-               if(m_resultCount > 0) {
-                  m_currentRegime = DetectRegime(m_scanResults[m_selectedRow]);
-                  m_signalStrength = CalculateSignalStrength(m_scanResults[m_selectedRow]);
-               }
-               return 4;  // Row selected
-            }
-         }
-      }
-
-      return 0;  // No action
-   }
-
-   //+------------------------------------------------------------------+
-   //| Get Selected Pair (4 parameter version)                           |
-   //+------------------------------------------------------------------+
-   bool GetSelectedPair(string &symbolA, string &symbolB, double &beta, double &zScore) {
-      if(m_selectedRow >= 0 && m_selectedRow < m_resultCount) {
-         symbolA = m_scanResults[m_selectedRow].symbolA;
-         symbolB = m_scanResults[m_selectedRow].symbolB;
-         beta = m_scanResults[m_selectedRow].beta;
-         zScore = m_scanResults[m_selectedRow].zScore;
-         return true;
-      }
-      return false;
    }
 
    //+------------------------------------------------------------------+
@@ -1165,11 +862,10 @@ public:
    }
 
    //+------------------------------------------------------------------+
-   //| Record Signal to history                                          |
+   //| Record Signal                                                     |
    //+------------------------------------------------------------------+
    void RecordSignal(string pairName, int signal, double zScore, double strength) {
       if(m_historyCount >= m_maxHistory) {
-         // Shift history
          for(int i = m_maxHistory - 1; i > 0; i--) {
             m_signalHistory[i] = m_signalHistory[i - 1];
          }
@@ -1178,7 +874,6 @@ public:
          m_historyCount++;
       }
 
-      // Add new signal at beginning
       for(int i = m_historyCount - 1; i > 0; i--) {
          m_signalHistory[i] = m_signalHistory[i - 1];
       }
@@ -1192,6 +887,30 @@ public:
       m_signalHistory[0].entryPL = 0;
 
       m_perfStats.totalSignals++;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Reset Stats                                                       |
+   //+------------------------------------------------------------------+
+   void ResetStats() {
+      ZeroMemory(m_perfStats);
+      m_perfStats.profitFactor = 1.0;
+      m_historyCount = 0;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get Top Pairs                                                     |
+   //+------------------------------------------------------------------+
+   int GetTopPairs(string &pairs[], int maxPairs = 6) {
+      int count = MathMin(maxPairs, m_resultCount);
+      ArrayResize(pairs, count);
+
+      for(int i = 0; i < count; i++) {
+         pairs[i] = m_scanResults[i].pairName;
+         if(i < 6) m_corrPairs[i] = pairs[i];
+      }
+
+      return count;
    }
 };
 
