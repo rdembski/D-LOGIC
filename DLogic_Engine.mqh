@@ -611,6 +611,17 @@ public:
       result.zScore = CalculateZScore(m_spreadSeries, result.spreadMean, result.spreadStdDev);
       result.currentSpread = m_spreadSeries[0];
 
+      // Store Z-Score series for later use
+      int spreadSize = ArraySize(m_spreadSeries);
+      ArrayResize(m_zScoreSeries, spreadSize);
+      if(result.spreadStdDev > 1e-10) {
+         for(int i = 0; i < spreadSize; i++) {
+            m_zScoreSeries[i] = (m_spreadSeries[i] - result.spreadMean) / result.spreadStdDev;
+         }
+      } else {
+         ArrayInitialize(m_zScoreSeries, 0);
+      }
+
       // Step 5: Cointegration Tests
       result.zeroCrossings = CountZeroCrossings(m_spreadSeries, result.spreadMean);
       result.adfStatistic = SimplifiedADFTest(m_spreadSeries);

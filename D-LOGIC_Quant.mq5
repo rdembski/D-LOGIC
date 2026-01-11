@@ -3,18 +3,21 @@
 //|              D-LOGIC Professional Pairs Trading Dashboard         |
 //|                                        Author: Rafał Dembski     |
 //|                                                                   |
-//|  Institutional-Grade Statistical Arbitrage System v4.60           |
-//|  - Classic Terminal Panel Design (SOLID backgrounds)              |
-//|  - Two-Column Layout: Scanner/Spread + Analytics/Trade            |
+//|  Institutional-Grade Statistical Arbitrage System v5.00           |
+//|  - Original Layout Design (5-Panel UI)                            |
+//|  - Pairs Trading Dashboard with TF/Spearman/Type columns          |
+//|  - Symbols Panel with currency pair buttons                       |
+//|  - Spread Panel with LE levels notation                           |
+//|  - ICT Analysis Panel (Sessions + Patterns)                       |
+//|  - Position Calculator with full risk management                  |
 //|  - OLS Regression Based Hedge Ratios                              |
 //|  - Z-Score Mean Reversion Strategy                                |
 //|  - Cointegration Testing (ADF + Zero-Crossing)                    |
 //|  - Hurst Exponent & Variance Ratio Testing                        |
-//|  - Correlation & Stability Analytics                              |
 //+------------------------------------------------------------------+
 #property copyright "Rafał Dembski"
 #property description "D-LOGIC Quant Dashboard - Statistical Arbitrage Engine"
-#property version   "4.60"
+#property version   "5.00"
 #property strict
 
 #include "DLogic_Engine.mqh"
@@ -306,12 +309,13 @@ void CheckSignals() {
 //+------------------------------------------------------------------+
 int OnInit() {
    Print("=======================================================");
-   Print("  D-LOGIC QUANT DASHBOARD v4.50");
+   Print("  D-LOGIC QUANT DASHBOARD v5.00");
    Print("  Statistical Arbitrage Engine");
    Print("  Author: Rafał Dembski");
    Print("-------------------------------------------------------");
-   Print("  Features: Performance Tracking, Signal History,");
-   Print("           Equity Curve, Alert System, Regime Detection");
+   Print("  Features: 5-Panel Original Layout, ICT Analysis,");
+   Print("           Position Calculator, Sessions Monitoring,");
+   Print("           Pairs Scanner with Spearman Correlation");
    Print("=======================================================");
 
    // Initialize engine
@@ -325,6 +329,7 @@ int OnInit() {
 
    // Initialize dashboard
    Dashboard = new CDashboard();
+   Dashboard.Init();  // Initialize with chart symbol
    Dashboard.SetPosition(Inp_DashX, Inp_DashY);
    Dashboard.ConfigureAlerts(Inp_AlertsEnabled, Inp_AlertZThreshold, Inp_AlertStrength);
 

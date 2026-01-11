@@ -79,6 +79,14 @@ private:
       double valuePerLotA = priceA * contractA;
       double valuePerLotB = priceB * contractB;
 
+      // Safety check for zero values
+      if(valuePerLotA <= 0 || valuePerLotB <= 0 || MathAbs(beta) < 1e-10) {
+         lotsA = minLotA;
+         lotsB = minLotB;
+         Print("[TRADE] Warning: Invalid values for lot calculation, using minimums");
+         return;
+      }
+
       // Calculate base lots from risk amount
       // Start with symbol A
       double baseLotA = riskAmount / valuePerLotA;
