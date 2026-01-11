@@ -3,12 +3,17 @@
 //|              D-LOGIC Professional Pairs Trading Dashboard         |
 //|                                        Author: Rafał Dembski     |
 //|                                                                   |
-//|  Original Layout Design v5.00                                     |
+//|  Original Layout Design v5.10                                     |
 //|  - Pairs Trading Dashboard (with TF, Spearman, Type columns)      |
 //|  - Symbols Panel (currency pair buttons)                          |
 //|  - Spread Panel (with LE levels notation)                         |
 //|  - ICT Analysis Panel (Sessions + ICT Patterns)                   |
 //|  - Position Calculator Panel (full calculator)                    |
+//|  - Performance Metrics Panel (GS Quant / ffn style)               |
+//|    * Risk-Adjusted: Sharpe, Sortino, Calmar Ratios                |
+//|    * Drawdown: Max DD, Current DD, Ulcer Index                    |
+//|    * Volatility: Ann. Vol, Regime Detection, ATR                  |
+//|    * Statistics: Win Rate, Profit Factor, Recovery Factor         |
 //+------------------------------------------------------------------+
 #property copyright "Rafał Dembski"
 #property strict
@@ -93,20 +98,61 @@ struct SSignalHistory {
 };
 
 struct SPerformanceStats {
+   // Basic counts
    int        totalSignals;
    int        executedTrades;
    int        winningTrades;
    int        losingTrades;
+
+   // P&L metrics
    double     totalPL;
    double     grossProfit;
    double     grossLoss;
-   double     maxDrawdown;
-   double     sharpeRatio;
    double     winRate;
    double     profitFactor;
    double     avgWin;
    double     avgLoss;
    double     expectancy;
+
+   // Risk-Adjusted Returns (Goldman Sachs / ffn style)
+   double     sharpeRatio;      // Risk-adjusted return vs risk-free rate
+   double     sortinoRatio;     // Like Sharpe but only considers downside volatility
+   double     calmarRatio;      // Return / Max Drawdown
+
+   // Drawdown Analysis
+   double     maxDrawdown;      // Maximum peak-to-trough decline
+   double     currentDrawdown;  // Current drawdown from peak
+   double     avgDrawdown;      // Average drawdown
+   double     ulcerIndex;       // RMS of drawdowns (pain index)
+   double     drawdownDuration; // Days in drawdown
+
+   // Volatility Metrics
+   double     annualizedReturn; // Annualized return %
+   double     annualizedVol;    // Annualized volatility
+   double     downsideVol;      // Downside deviation
+   double     volPercentile;    // Current vol vs historical (0-100)
+
+   // Trade Statistics
+   double     avgTradeDuration; // Average trade duration in hours
+   double     maxConsecWins;    // Maximum consecutive wins
+   double     maxConsecLosses;  // Maximum consecutive losses
+   double     recoveryFactor;   // Total profit / Max Drawdown
+
+   // Equity curve data
+   double     peakEquity;       // Historical peak equity
+   double     currentEquity;    // Current equity
+};
+
+// Volatility analysis structure
+struct SVolatilityMetrics {
+   double     atr14;            // 14-period ATR
+   double     atr50;            // 50-period ATR
+   double     rollingVol20;     // 20-day rolling volatility
+   double     rollingVol60;     // 60-day rolling volatility
+   double     volRatio;         // Short/Long vol ratio
+   double     volRegime;        // 0=Low, 1=Normal, 2=High, 3=Extreme
+   double     volPercentile;    // Historical percentile (0-100)
+   double     impliedMove;      // Expected daily move based on vol
 };
 
 struct SPositionCalcResult {
@@ -179,6 +225,17 @@ private:
    // Performance
    SPerformanceStats m_perfStats;
 
+   // Volatility metrics
+   SVolatilityMetrics m_volMetrics;
+
+   // Equity history for calculations
+   double         m_equityHistory[];
+   double         m_returnHistory[];
+   int            m_equityHistorySize;
+   int            m_equityHistoryCount;
+   datetime       m_lastEquityUpdate;
+   double         m_initialEquity;
+
    // Alert system
    bool           m_alertsEnabled;
    double         m_alertZThreshold;
@@ -212,31 +269,52 @@ private:
    }
 
    //+------------------------------------------------------------------+
-   //| Create Rectangle Panel                                            |
+   //| Create Rectangle Panel - SOLID FILL (no transparency)             |
    //+------------------------------------------------------------------+
    void CreatePanel(string name, int x, int y, int w, int h,
-                    color bgClr, color borderClr = clrNONE) {
+                    color bgClr, color borderClr = clrNONE, bool isBackground = false) {
       string objName = m_prefix + name;
 
-      if(ObjectFind(0, objName) < 0) {
-         ObjectCreate(0, objName, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+      // Delete and recreate for clean state
+      if(ObjectFind(0, objName) >= 0) {
+         ObjectDelete(0, objName);
       }
+      ObjectCreate(0, objName, OBJ_RECTANGLE_LABEL, 0, 0, 0);
 
+      // Position and size
       ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, x);
       ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y);
       ObjectSetInteger(0, objName, OBJPROP_XSIZE, w);
       ObjectSetInteger(0, objName, OBJPROP_YSIZE, h);
-      ObjectSetInteger(0, objName, OBJPROP_BGCOLOR, bgClr);
-      ObjectSetInteger(0, objName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-      ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
-      ObjectSetInteger(0, objName, OBJPROP_BACK, true);
 
+      // CRITICAL: Solid background color - no transparency
+      ObjectSetInteger(0, objName, OBJPROP_BGCOLOR, bgClr);
+
+      // Border styling - FLAT for solid fill
+      ObjectSetInteger(0, objName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+
+      // Corner anchor
+      ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, objName, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
+
+      // Non-selectable, hidden from object list
+      ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
+
+      // Z-Order for layering (background panels lower, content higher)
+      ObjectSetInteger(0, objName, OBJPROP_ZORDER, isBackground ? 0 : 10);
+
+      // CRITICAL: OBJPROP_BACK = false means FOREGROUND rendering
+      // Object renders ON TOP of chart, not behind it
+      ObjectSetInteger(0, objName, OBJPROP_BACK, false);
+
+      // Border color
       if(borderClr != clrNONE) {
          ObjectSetInteger(0, objName, OBJPROP_COLOR, borderClr);
          ObjectSetInteger(0, objName, OBJPROP_WIDTH, 1);
       } else {
          ObjectSetInteger(0, objName, OBJPROP_COLOR, bgClr);
+         ObjectSetInteger(0, objName, OBJPROP_WIDTH, 0);
       }
    }
 
@@ -471,6 +549,235 @@ private:
       m_calcResult.insufficientMargin = (marginRequired > freeMargin * 0.9);
    }
 
+   //+------------------------------------------------------------------+
+   //| Update Equity History - call periodically (e.g., daily)           |
+   //+------------------------------------------------------------------+
+   void UpdateEquityHistory() {
+      datetime now = TimeCurrent();
+
+      // Update daily (or more frequently for intraday)
+      if(now - m_lastEquityUpdate < 3600) return;  // Update hourly minimum
+      m_lastEquityUpdate = now;
+
+      double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+      m_perfStats.currentEquity = currentEquity;
+
+      // Track peak equity for drawdown
+      if(currentEquity > m_perfStats.peakEquity) {
+         m_perfStats.peakEquity = currentEquity;
+      }
+
+      // Calculate current drawdown
+      if(m_perfStats.peakEquity > 0) {
+         m_perfStats.currentDrawdown = (m_perfStats.peakEquity - currentEquity) / m_perfStats.peakEquity * 100.0;
+         if(m_perfStats.currentDrawdown > m_perfStats.maxDrawdown) {
+            m_perfStats.maxDrawdown = m_perfStats.currentDrawdown;
+         }
+      }
+
+      // Shift history
+      for(int i = m_equityHistorySize - 1; i > 0; i--) {
+         m_equityHistory[i] = m_equityHistory[i-1];
+         m_returnHistory[i] = m_returnHistory[i-1];
+      }
+
+      // Add new equity
+      m_equityHistory[0] = currentEquity;
+      m_equityHistoryCount = MathMin(m_equityHistoryCount + 1, m_equityHistorySize);
+
+      // Calculate return if we have previous equity
+      if(m_equityHistory[1] > 0) {
+         m_returnHistory[0] = (currentEquity - m_equityHistory[1]) / m_equityHistory[1];
+      } else {
+         m_returnHistory[0] = 0;
+      }
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Risk-Adjusted Metrics (Sharpe, Sortino, Calmar)         |
+   //+------------------------------------------------------------------+
+   void CalculateRiskMetrics() {
+      if(m_equityHistoryCount < 10) return;  // Need minimum data
+
+      double riskFreeRate = 0.05 / 252.0;  // ~5% annual, daily rate
+      int n = MathMin(m_equityHistoryCount, m_equityHistorySize);
+
+      // Calculate mean return
+      double sumReturns = 0;
+      for(int i = 0; i < n; i++) {
+         sumReturns += m_returnHistory[i];
+      }
+      double meanReturn = sumReturns / n;
+
+      // Calculate standard deviation (total volatility)
+      double sumSqDev = 0;
+      double sumDownsideSqDev = 0;
+      int downsideCount = 0;
+
+      for(int i = 0; i < n; i++) {
+         double dev = m_returnHistory[i] - meanReturn;
+         sumSqDev += dev * dev;
+
+         // Downside deviation (only negative returns)
+         if(m_returnHistory[i] < 0) {
+            sumDownsideSqDev += m_returnHistory[i] * m_returnHistory[i];
+            downsideCount++;
+         }
+      }
+
+      double stdDev = MathSqrt(sumSqDev / n);
+      double downsideStdDev = downsideCount > 0 ? MathSqrt(sumDownsideSqDev / downsideCount) : stdDev;
+
+      // Annualize metrics (assuming hourly updates, ~6240 hours/year trading)
+      double annualizeFactor = MathSqrt(6240);  // For volatility
+      double annualizeReturn = 6240;            // For returns
+
+      m_perfStats.annualizedReturn = meanReturn * annualizeReturn * 100.0;
+      m_perfStats.annualizedVol = stdDev * annualizeFactor * 100.0;
+      m_perfStats.downsideVol = downsideStdDev * annualizeFactor * 100.0;
+
+      // SHARPE RATIO = (Return - RiskFree) / StdDev
+      if(stdDev > 1e-10) {
+         m_perfStats.sharpeRatio = (meanReturn - riskFreeRate) / stdDev * MathSqrt(252);
+      } else {
+         m_perfStats.sharpeRatio = 0;
+      }
+
+      // SORTINO RATIO = (Return - RiskFree) / DownsideStdDev
+      if(downsideStdDev > 1e-10) {
+         m_perfStats.sortinoRatio = (meanReturn - riskFreeRate) / downsideStdDev * MathSqrt(252);
+      } else {
+         m_perfStats.sortinoRatio = 0;
+      }
+
+      // CALMAR RATIO = AnnualizedReturn / MaxDrawdown
+      if(m_perfStats.maxDrawdown > 0.1) {
+         m_perfStats.calmarRatio = m_perfStats.annualizedReturn / m_perfStats.maxDrawdown;
+      } else {
+         m_perfStats.calmarRatio = 0;
+      }
+
+      // ULCER INDEX (RMS of drawdowns)
+      double sumDrawdownSq = 0;
+      double peak = m_equityHistory[n-1];  // Start from oldest
+      int ddCount = 0;
+
+      for(int i = n - 1; i >= 0; i--) {
+         if(m_equityHistory[i] > peak) peak = m_equityHistory[i];
+         if(peak > 0) {
+            double dd = (peak - m_equityHistory[i]) / peak * 100.0;
+            sumDrawdownSq += dd * dd;
+            ddCount++;
+         }
+      }
+      m_perfStats.ulcerIndex = ddCount > 0 ? MathSqrt(sumDrawdownSq / ddCount) : 0;
+
+      // Recovery Factor = Total Profit / Max Drawdown
+      if(m_perfStats.maxDrawdown > 0.1 && m_initialEquity > 0) {
+         double totalReturn = (m_perfStats.currentEquity - m_initialEquity) / m_initialEquity * 100.0;
+         m_perfStats.recoveryFactor = totalReturn / m_perfStats.maxDrawdown;
+      }
+
+      // Expectancy = (WinRate * AvgWin) - (LoseRate * AvgLoss)
+      if(m_perfStats.executedTrades > 0) {
+         double loseRate = 100.0 - m_perfStats.winRate;
+         m_perfStats.expectancy = (m_perfStats.winRate / 100.0 * m_perfStats.avgWin) -
+                                   (loseRate / 100.0 * m_perfStats.avgLoss);
+      }
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Volatility Metrics                                      |
+   //+------------------------------------------------------------------+
+   void CalculateVolatilityMetrics(string symbol) {
+      if(symbol == "") symbol = Symbol();
+
+      // Calculate ATR(14) and ATR(50)
+      int atr14Handle = iATR(symbol, PERIOD_H1, 14);
+      int atr50Handle = iATR(symbol, PERIOD_H1, 50);
+
+      double atr14[], atr50[];
+      ArraySetAsSeries(atr14, true);
+      ArraySetAsSeries(atr50, true);
+
+      if(atr14Handle != INVALID_HANDLE && atr50Handle != INVALID_HANDLE) {
+         CopyBuffer(atr14Handle, 0, 0, 1, atr14);
+         CopyBuffer(atr50Handle, 0, 0, 1, atr50);
+
+         if(ArraySize(atr14) > 0) m_volMetrics.atr14 = atr14[0];
+         if(ArraySize(atr50) > 0) m_volMetrics.atr50 = atr50[0];
+
+         IndicatorRelease(atr14Handle);
+         IndicatorRelease(atr50Handle);
+      }
+
+      // Calculate rolling volatility from close prices
+      double close[];
+      ArraySetAsSeries(close, true);
+      if(CopyClose(symbol, PERIOD_H1, 0, 60, close) >= 60) {
+         // 20-period volatility
+         double returns20[];
+         ArrayResize(returns20, 20);
+         for(int i = 0; i < 20; i++) {
+            if(close[i+1] > 0) {
+               returns20[i] = MathLog(close[i] / close[i+1]);
+            }
+         }
+         m_volMetrics.rollingVol20 = CalculateStdDev(returns20, 20) * MathSqrt(252 * 24) * 100.0;
+
+         // 60-period volatility
+         double returns60[];
+         ArrayResize(returns60, 59);
+         for(int i = 0; i < 59; i++) {
+            if(close[i+1] > 0) {
+               returns60[i] = MathLog(close[i] / close[i+1]);
+            }
+         }
+         m_volMetrics.rollingVol60 = CalculateStdDev(returns60, 59) * MathSqrt(252 * 24) * 100.0;
+      }
+
+      // Volatility ratio (short/long term)
+      if(m_volMetrics.rollingVol60 > 0) {
+         m_volMetrics.volRatio = m_volMetrics.rollingVol20 / m_volMetrics.rollingVol60;
+      }
+
+      // Volatility regime classification
+      if(m_volMetrics.volRatio < 0.7) {
+         m_volMetrics.volRegime = 0;  // Low volatility
+      } else if(m_volMetrics.volRatio < 1.0) {
+         m_volMetrics.volRegime = 1;  // Normal
+      } else if(m_volMetrics.volRatio < 1.5) {
+         m_volMetrics.volRegime = 2;  // High
+      } else {
+         m_volMetrics.volRegime = 3;  // Extreme
+      }
+
+      // Implied daily move (using 20-day vol)
+      double currentPrice = SymbolInfoDouble(symbol, SYMBOL_BID);
+      m_volMetrics.impliedMove = currentPrice * (m_volMetrics.rollingVol20 / 100.0) / MathSqrt(252);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Helper: Calculate Standard Deviation                              |
+   //+------------------------------------------------------------------+
+   double CalculateStdDev(double &arr[], int size) {
+      if(size < 2) return 0;
+
+      double sum = 0;
+      for(int i = 0; i < size; i++) {
+         sum += arr[i];
+      }
+      double mean = sum / size;
+
+      double sumSq = 0;
+      for(int i = 0; i < size; i++) {
+         double dev = arr[i] - mean;
+         sumSq += dev * dev;
+      }
+
+      return MathSqrt(sumSq / (size - 1));
+   }
+
 public:
    //+------------------------------------------------------------------+
    //| Constructor                                                       |
@@ -523,6 +830,21 @@ public:
       ArrayInitialize(m_spreadHistory, 0);
       ArrayInitialize(m_zScoreHistory, 0);
       ZeroMemory(m_perfStats);
+      ZeroMemory(m_volMetrics);
+
+      // Initialize equity tracking for Sharpe/Sortino calculations
+      m_equityHistorySize = 252;  // ~1 year of daily data
+      m_equityHistoryCount = 0;
+      ArrayResize(m_equityHistory, m_equityHistorySize);
+      ArrayResize(m_returnHistory, m_equityHistorySize);
+      ArrayInitialize(m_equityHistory, 0);
+      ArrayInitialize(m_returnHistory, 0);
+      m_lastEquityUpdate = 0;
+      m_initialEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+
+      // Initialize performance stats
+      m_perfStats.peakEquity = m_initialEquity;
+      m_perfStats.currentEquity = m_initialEquity;
    }
 
    //+------------------------------------------------------------------+
@@ -647,8 +969,18 @@ public:
 
       // PANEL 5: Position Calculator
       int calcX = symbolsX + SYMBOLS_WIDTH + PANEL_GAP + 50;
-      int calcH = dashboardH + PANEL_GAP + SPREAD_HEIGHT + PANEL_GAP + ICT_HEIGHT;
-      DrawPositionCalculator(calcX, y, CALC_WIDTH, calcH);
+      int calcPartH = 280;  // Reduced height for calculator
+      DrawPositionCalculator(calcX, y, CALC_WIDTH, calcPartH);
+
+      // PANEL 6: Performance Metrics (below Position Calculator)
+      int perfY = y + calcPartH + PANEL_GAP;
+      int perfH = dashboardH + SPREAD_HEIGHT + ICT_HEIGHT + 2 * PANEL_GAP - calcPartH - PANEL_GAP;
+      DrawPerformancePanel(calcX, perfY, CALC_WIDTH, perfH);
+
+      // Update metrics periodically
+      UpdateEquityHistory();
+      CalculateRiskMetrics();
+      CalculateVolatilityMetrics(m_calcSymbol);
 
       ChartRedraw(0);
    }
@@ -657,11 +989,11 @@ public:
    //| Draw Dashboard Panel (Pairs Trading Dashboard)                    |
    //+------------------------------------------------------------------+
    void DrawDashboardPanel(int x, int y, int w, int h) {
-      // Panel background
-      CreatePanel("DASH_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER);
+      // Panel background (isBackground=true for base layer)
+      CreatePanel("DASH_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER, true);
 
-      // Title bar
-      CreatePanel("DASH_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG);
+      // Title bar (on top of background)
+      CreatePanel("DASH_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG, clrNONE, false);
       CreateLabel("DASH_TITLE", "Pairs Trading Dashboard - D-LOGIC 5.00",
                   x + 8, y + 4, CLR_TITLE_TEXT, FONT_SIZE_TITLE, "Consolas Bold");
 
@@ -755,11 +1087,11 @@ public:
    //| Draw Symbols Panel                                                |
    //+------------------------------------------------------------------+
    void DrawSymbolsPanel(int x, int y, int w, int h) {
-      // Panel background
-      CreatePanel("SYM_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER);
+      // Panel background (isBackground=true for base layer)
+      CreatePanel("SYM_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER, true);
 
-      // Title
-      CreatePanel("SYM_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG);
+      // Title (on top)
+      CreatePanel("SYM_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG, clrNONE, false);
       CreateLabel("SYM_TITLE", "Symbols", x + 5, y + 4, CLR_TITLE_TEXT, FONT_SIZE_SMALL, "Consolas Bold");
 
       // Symbol buttons
@@ -791,11 +1123,11 @@ public:
    //| Draw Spread Panel                                                 |
    //+------------------------------------------------------------------+
    void DrawSpreadPanel(int x, int y, int w, int h, SPairResult &result) {
-      // Panel background
-      CreatePanel("SPR_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER);
+      // Panel background (isBackground=true for base layer)
+      CreatePanel("SPR_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER, true);
 
-      // Title bar
-      CreatePanel("SPR_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG);
+      // Title bar (on top)
+      CreatePanel("SPR_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG, clrNONE, false);
       string spreadTitle = "Spread: " + m_spreadPairA + " / " + m_spreadPairB;
       if(m_spreadPairA == "") spreadTitle = "Spread: " + result.pairName;
       CreateLabel("SPR_TITLE", spreadTitle, x + 8, y + 4, CLR_TITLE_TEXT, FONT_SIZE_TITLE, "Consolas Bold");
@@ -888,11 +1220,11 @@ public:
    //| Draw ICT Analysis Panel                                           |
    //+------------------------------------------------------------------+
    void DrawICTPanel(int x, int y, int w, int h) {
-      // Panel background
-      CreatePanel("ICT_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER);
+      // Panel background (isBackground=true for base layer)
+      CreatePanel("ICT_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER, true);
 
-      // Title bar
-      CreatePanel("ICT_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG);
+      // Title bar (on top)
+      CreatePanel("ICT_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG, clrNONE, false);
       string ictTitle = "ICT Analysis - " + m_ictSymbol;
       CreateLabel("ICT_TITLE", ictTitle, x + 8, y + 4, CLR_TITLE_TEXT, FONT_SIZE_TITLE, "Consolas Bold");
 
@@ -957,11 +1289,11 @@ public:
    //| Draw Position Calculator Panel                                    |
    //+------------------------------------------------------------------+
    void DrawPositionCalculator(int x, int y, int w, int h) {
-      // Panel background
-      CreatePanel("CALC_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER);
+      // Panel background (isBackground=true for base layer)
+      CreatePanel("CALC_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER, true);
 
-      // Title bar
-      CreatePanel("CALC_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG);
+      // Title bar (on top)
+      CreatePanel("CALC_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG, clrNONE, false);
       CreateLabel("CALC_TITLE", "Position Calculator", x + 8, y + 4, CLR_TITLE_TEXT, FONT_SIZE_TITLE, "Consolas Bold");
 
       int contentY = y + TITLE_HEIGHT + 8;
@@ -1087,6 +1419,141 @@ public:
          CreateLabel("CALC_WARN", "Insufficient margin!", col1 + 10, contentY + 2,
                      CLR_TEXT_WHITE, FONT_SIZE, "Consolas Bold");
       }
+   }
+
+   //+------------------------------------------------------------------+
+   //| Draw Performance Metrics Panel (GS Quant / ffn style)             |
+   //+------------------------------------------------------------------+
+   void DrawPerformancePanel(int x, int y, int w, int h) {
+      // Panel background (solid)
+      CreatePanel("PERF_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER, true);
+
+      // Title bar
+      CreatePanel("PERF_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG, clrNONE, false);
+      CreateLabel("PERF_TITLE", "Performance Metrics", x + 8, y + 4, CLR_TITLE_TEXT, FONT_SIZE_TITLE, "Consolas Bold");
+
+      int contentY = y + TITLE_HEIGHT + 6;
+      int col1 = x + 8;
+      int col2 = x + 110;
+      int rowH = 13;
+
+      // --- RISK-ADJUSTED RETURNS ---
+      CreateLabel("PERF_RAR_H", "--- RISK ADJUSTED ---", col1, contentY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+      contentY += 14;
+
+      // Sharpe Ratio
+      color sharpeClr = m_perfStats.sharpeRatio > 1.0 ? CLR_NEON_GREEN :
+                       (m_perfStats.sharpeRatio > 0 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("PERF_SHARPE_L", "Sharpe Ratio:", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      CreateLabel("PERF_SHARPE_V", DoubleToString(m_perfStats.sharpeRatio, 2),
+                  col2, contentY, sharpeClr, FONT_SIZE, "Consolas Bold");
+      contentY += rowH;
+
+      // Sortino Ratio
+      color sortinoClr = m_perfStats.sortinoRatio > 1.5 ? CLR_NEON_GREEN :
+                        (m_perfStats.sortinoRatio > 0 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("PERF_SORTINO_L", "Sortino Ratio:", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      CreateLabel("PERF_SORTINO_V", DoubleToString(m_perfStats.sortinoRatio, 2),
+                  col2, contentY, sortinoClr, FONT_SIZE, "Consolas Bold");
+      contentY += rowH;
+
+      // Calmar Ratio
+      color calmarClr = m_perfStats.calmarRatio > 2.0 ? CLR_NEON_GREEN :
+                       (m_perfStats.calmarRatio > 0.5 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("PERF_CALMAR_L", "Calmar Ratio:", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      CreateLabel("PERF_CALMAR_V", DoubleToString(m_perfStats.calmarRatio, 2),
+                  col2, contentY, calmarClr, FONT_SIZE, "Consolas Bold");
+      contentY += rowH + 4;
+
+      // --- DRAWDOWN ---
+      CreateLabel("PERF_DD_H", "--- DRAWDOWN ---", col1, contentY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+      contentY += 14;
+
+      // Max Drawdown
+      color ddClr = m_perfStats.maxDrawdown < 5.0 ? CLR_NEON_GREEN :
+                   (m_perfStats.maxDrawdown < 15.0 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("PERF_MDD_L", "Max DD:", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      CreateLabel("PERF_MDD_V", DoubleToString(m_perfStats.maxDrawdown, 2) + "%",
+                  col2, contentY, ddClr, FONT_SIZE, "Consolas Bold");
+      contentY += rowH;
+
+      // Current Drawdown
+      color cddClr = m_perfStats.currentDrawdown < 2.0 ? CLR_NEON_GREEN :
+                    (m_perfStats.currentDrawdown < 8.0 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("PERF_CDD_L", "Current DD:", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      CreateLabel("PERF_CDD_V", DoubleToString(m_perfStats.currentDrawdown, 2) + "%",
+                  col2, contentY, cddClr, FONT_SIZE);
+      contentY += rowH;
+
+      // Ulcer Index
+      CreateLabel("PERF_ULCER_L", "Ulcer Index:", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      CreateLabel("PERF_ULCER_V", DoubleToString(m_perfStats.ulcerIndex, 2),
+                  col2, contentY, CLR_TEXT_WHITE, FONT_SIZE);
+      contentY += rowH + 4;
+
+      // --- VOLATILITY ---
+      CreateLabel("PERF_VOL_H", "--- VOLATILITY ---", col1, contentY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+      contentY += 14;
+
+      // Annualized Vol
+      CreateLabel("PERF_AVOL_L", "Ann. Vol:", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      CreateLabel("PERF_AVOL_V", DoubleToString(m_perfStats.annualizedVol, 1) + "%",
+                  col2, contentY, CLR_TEXT_WHITE, FONT_SIZE);
+      contentY += rowH;
+
+      // Vol Regime
+      string volRegimeStr = "";
+      color volRegimeClr = CLR_TEXT_WHITE;
+      switch((int)m_volMetrics.volRegime) {
+         case 0: volRegimeStr = "LOW"; volRegimeClr = CLR_NEON_GREEN; break;
+         case 1: volRegimeStr = "NORMAL"; volRegimeClr = CLR_NEON_CYAN; break;
+         case 2: volRegimeStr = "HIGH"; volRegimeClr = CLR_NEON_ORANGE; break;
+         case 3: volRegimeStr = "EXTREME"; volRegimeClr = CLR_NEON_RED; break;
+      }
+      CreateLabel("PERF_VREG_L", "Vol Regime:", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      CreateLabel("PERF_VREG_V", volRegimeStr, col2, contentY, volRegimeClr, FONT_SIZE, "Consolas Bold");
+      contentY += rowH;
+
+      // ATR
+      CreateLabel("PERF_ATR_L", "ATR(14):", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      CreateLabel("PERF_ATR_V", DoubleToString(m_volMetrics.atr14, 5),
+                  col2, contentY, CLR_TEXT_WHITE, FONT_SIZE);
+      contentY += rowH + 4;
+
+      // --- STATISTICS ---
+      CreateLabel("PERF_STAT_H", "--- STATISTICS ---", col1, contentY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+      contentY += 14;
+
+      // Win Rate
+      color winRateClr = m_perfStats.winRate > 50.0 ? CLR_NEON_GREEN :
+                        (m_perfStats.winRate > 40.0 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("PERF_WIN_L", "Win Rate:", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      CreateLabel("PERF_WIN_V", DoubleToString(m_perfStats.winRate, 1) + "%",
+                  col2, contentY, winRateClr, FONT_SIZE, "Consolas Bold");
+      contentY += rowH;
+
+      // Profit Factor
+      color pfClr = m_perfStats.profitFactor > 1.5 ? CLR_NEON_GREEN :
+                   (m_perfStats.profitFactor > 1.0 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("PERF_PF_L", "Profit Factor:", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      CreateLabel("PERF_PF_V", DoubleToString(m_perfStats.profitFactor, 2),
+                  col2, contentY, pfClr, FONT_SIZE, "Consolas Bold");
+      contentY += rowH;
+
+      // Total Trades
+      CreateLabel("PERF_TRADES_L", "Trades:", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      CreateLabel("PERF_TRADES_V", IntegerToString(m_perfStats.executedTrades) +
+                  " (" + IntegerToString(m_perfStats.winningTrades) + "W/" +
+                  IntegerToString(m_perfStats.losingTrades) + "L)",
+                  col2, contentY, CLR_TEXT_WHITE, FONT_SIZE);
+      contentY += rowH;
+
+      // Recovery Factor
+      color rfClr = m_perfStats.recoveryFactor > 2.0 ? CLR_NEON_GREEN :
+                   (m_perfStats.recoveryFactor > 1.0 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("PERF_RF_L", "Recovery F.:", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      CreateLabel("PERF_RF_V", DoubleToString(m_perfStats.recoveryFactor, 2),
+                  col2, contentY, rfClr, FONT_SIZE);
    }
 
    //+------------------------------------------------------------------+

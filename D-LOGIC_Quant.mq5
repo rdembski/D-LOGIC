@@ -3,13 +3,17 @@
 //|              D-LOGIC Professional Pairs Trading Dashboard         |
 //|                                        Author: Rafał Dembski     |
 //|                                                                   |
-//|  Institutional-Grade Statistical Arbitrage System v5.00           |
-//|  - Original Layout Design (5-Panel UI)                            |
+//|  Institutional-Grade Statistical Arbitrage System v5.10           |
+//|  - Original Layout Design (6-Panel UI)                            |
 //|  - Pairs Trading Dashboard with TF/Spearman/Type columns          |
 //|  - Symbols Panel with currency pair buttons                       |
 //|  - Spread Panel with LE levels notation                           |
 //|  - ICT Analysis Panel (Sessions + Patterns)                       |
 //|  - Position Calculator with full risk management                  |
+//|  - Performance Metrics (GS Quant / ffn style)                     |
+//|    * Sharpe, Sortino, Calmar Ratios                               |
+//|    * Max/Current Drawdown, Ulcer Index                            |
+//|    * Volatility Regime Detection                                  |
 //|  - OLS Regression Based Hedge Ratios                              |
 //|  - Z-Score Mean Reversion Strategy                                |
 //|  - Cointegration Testing (ADF + Zero-Crossing)                    |
@@ -17,7 +21,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Rafał Dembski"
 #property description "D-LOGIC Quant Dashboard - Statistical Arbitrage Engine"
-#property version   "5.00"
+#property version   "5.10"
 #property strict
 
 #include "DLogic_Engine.mqh"
