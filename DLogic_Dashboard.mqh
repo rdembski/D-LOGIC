@@ -215,7 +215,7 @@ private:
    //| Create Rectangle Panel                                            |
    //+------------------------------------------------------------------+
    void CreatePanel(string name, int x, int y, int w, int h,
-                    color bgClr, color borderClr = clrNONE) {
+                    color bgClr, color borderClr = clrNONE, bool isBackground = false) {
       string objName = m_prefix + name;
 
       if(ObjectFind(0, objName) < 0) {
@@ -230,7 +230,10 @@ private:
       ObjectSetInteger(0, objName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
       ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
       ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
-      ObjectSetInteger(0, objName, OBJPROP_BACK, true);
+      ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
+      ObjectSetInteger(0, objName, OBJPROP_ZORDER, isBackground ? 0 : 1);
+      // OBJPROP_BACK = false means foreground (on top of chart)
+      ObjectSetInteger(0, objName, OBJPROP_BACK, false);
 
       if(borderClr != clrNONE) {
          ObjectSetInteger(0, objName, OBJPROP_COLOR, borderClr);
@@ -657,11 +660,11 @@ public:
    //| Draw Dashboard Panel (Pairs Trading Dashboard)                    |
    //+------------------------------------------------------------------+
    void DrawDashboardPanel(int x, int y, int w, int h) {
-      // Panel background
-      CreatePanel("DASH_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER);
+      // Panel background (isBackground=true for base layer)
+      CreatePanel("DASH_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER, true);
 
-      // Title bar
-      CreatePanel("DASH_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG);
+      // Title bar (on top of background)
+      CreatePanel("DASH_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG, clrNONE, false);
       CreateLabel("DASH_TITLE", "Pairs Trading Dashboard - D-LOGIC 5.00",
                   x + 8, y + 4, CLR_TITLE_TEXT, FONT_SIZE_TITLE, "Consolas Bold");
 
@@ -755,11 +758,11 @@ public:
    //| Draw Symbols Panel                                                |
    //+------------------------------------------------------------------+
    void DrawSymbolsPanel(int x, int y, int w, int h) {
-      // Panel background
-      CreatePanel("SYM_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER);
+      // Panel background (isBackground=true for base layer)
+      CreatePanel("SYM_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER, true);
 
-      // Title
-      CreatePanel("SYM_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG);
+      // Title (on top)
+      CreatePanel("SYM_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG, clrNONE, false);
       CreateLabel("SYM_TITLE", "Symbols", x + 5, y + 4, CLR_TITLE_TEXT, FONT_SIZE_SMALL, "Consolas Bold");
 
       // Symbol buttons
@@ -791,11 +794,11 @@ public:
    //| Draw Spread Panel                                                 |
    //+------------------------------------------------------------------+
    void DrawSpreadPanel(int x, int y, int w, int h, SPairResult &result) {
-      // Panel background
-      CreatePanel("SPR_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER);
+      // Panel background (isBackground=true for base layer)
+      CreatePanel("SPR_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER, true);
 
-      // Title bar
-      CreatePanel("SPR_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG);
+      // Title bar (on top)
+      CreatePanel("SPR_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG, clrNONE, false);
       string spreadTitle = "Spread: " + m_spreadPairA + " / " + m_spreadPairB;
       if(m_spreadPairA == "") spreadTitle = "Spread: " + result.pairName;
       CreateLabel("SPR_TITLE", spreadTitle, x + 8, y + 4, CLR_TITLE_TEXT, FONT_SIZE_TITLE, "Consolas Bold");
@@ -888,11 +891,11 @@ public:
    //| Draw ICT Analysis Panel                                           |
    //+------------------------------------------------------------------+
    void DrawICTPanel(int x, int y, int w, int h) {
-      // Panel background
-      CreatePanel("ICT_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER);
+      // Panel background (isBackground=true for base layer)
+      CreatePanel("ICT_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER, true);
 
-      // Title bar
-      CreatePanel("ICT_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG);
+      // Title bar (on top)
+      CreatePanel("ICT_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG, clrNONE, false);
       string ictTitle = "ICT Analysis - " + m_ictSymbol;
       CreateLabel("ICT_TITLE", ictTitle, x + 8, y + 4, CLR_TITLE_TEXT, FONT_SIZE_TITLE, "Consolas Bold");
 
@@ -957,11 +960,11 @@ public:
    //| Draw Position Calculator Panel                                    |
    //+------------------------------------------------------------------+
    void DrawPositionCalculator(int x, int y, int w, int h) {
-      // Panel background
-      CreatePanel("CALC_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER);
+      // Panel background (isBackground=true for base layer)
+      CreatePanel("CALC_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER, true);
 
-      // Title bar
-      CreatePanel("CALC_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG);
+      // Title bar (on top)
+      CreatePanel("CALC_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG, clrNONE, false);
       CreateLabel("CALC_TITLE", "Position Calculator", x + 8, y + 4, CLR_TITLE_TEXT, FONT_SIZE_TITLE, "Consolas Bold");
 
       int contentY = y + TITLE_HEIGHT + 8;
