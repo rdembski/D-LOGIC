@@ -3,7 +3,7 @@
 //|              D-LOGIC Professional Pairs Trading Dashboard         |
 //|                                        Author: Rafał Dembski     |
 //|                                                                   |
-//|  Original Layout Design v5.11                                     |
+//|  Original Layout Design v5.20                                     |
 //|  - Pairs Trading Dashboard (with TF, Spearman, Type columns)      |
 //|  - Symbols Panel (currency pair buttons)                          |
 //|  - Spread Panel (with LE levels notation)                         |
@@ -155,6 +155,36 @@ struct SVolatilityMetrics {
    double     impliedMove;      // Expected daily move based on vol
 };
 
+// Market Intelligence structure (Wall Street style)
+struct SMarketIntelligence {
+   // Currency Strength (0-100 scale)
+   double     strengthEUR;
+   double     strengthGBP;
+   double     strengthUSD;
+   double     strengthJPY;
+   double     strengthCHF;
+   double     strengthAUD;
+   double     strengthCAD;
+   double     strengthNZD;
+
+   // Market Regime
+   int        regime;           // 0=Ranging, 1=Trending, 2=Volatile, 3=Breakout
+   double     regimeStrength;   // 0-100 confidence
+   double     trendBias;        // -100 (bearish) to +100 (bullish)
+
+   // Risk Sentiment
+   int        riskSentiment;    // -1=Risk-Off, 0=Neutral, 1=Risk-On
+   double     vixProxy;         // Volatility index proxy (from FX vol)
+
+   // DXY Proxy (USD Index)
+   double     dxyValue;         // Calculated USD index
+   double     dxyChange;        // Daily change %
+
+   // Correlations
+   double     corrEURGBP;       // EUR/USD vs GBP/USD correlation
+   double     corrRiskOn;       // AUD/JPY correlation (risk barometer)
+};
+
 struct SPositionCalcResult {
    double     positionSize;     // Lots
    double     riskAmount;       // Account currency
@@ -227,6 +257,10 @@ private:
 
    // Volatility metrics
    SVolatilityMetrics m_volMetrics;
+
+   // Market Intelligence (Wall Street style)
+   SMarketIntelligence m_marketIntel;
+   datetime       m_lastIntelUpdate;
 
    // Equity history for calculations
    double         m_equityHistory[];
@@ -776,6 +810,190 @@ private:
       return MathSqrt(sumSq / (size - 1));
    }
 
+   //+------------------------------------------------------------------+
+   //| Calculate Market Intelligence (Wall Street style analytics)       |
+   //+------------------------------------------------------------------+
+   void CalculateMarketIntelligence() {
+      datetime now = TimeCurrent();
+      if(now - m_lastIntelUpdate < 60) return;  // Update every minute
+      m_lastIntelUpdate = now;
+
+      // === CURRENCY STRENGTH CALCULATION ===
+      // Based on price change over last 24 hours across major pairs
+      string pairs[] = {"EURUSD+", "GBPUSD+", "USDJPY+", "USDCHF+", "AUDUSD+", "USDCAD+", "NZDUSD+"};
+      double changes[7];
+
+      for(int i = 0; i < 7; i++) {
+         double close[], open24h;
+         ArraySetAsSeries(close, true);
+         if(CopyClose(pairs[i], PERIOD_H1, 0, 25, close) >= 25) {
+            changes[i] = (close[0] - close[24]) / close[24] * 100.0;
+         } else {
+            changes[i] = 0;
+         }
+      }
+
+      // Calculate individual currency strength
+      // EUR: from EURUSD
+      m_marketIntel.strengthEUR = 50 + changes[0] * 10;
+      // GBP: from GBPUSD
+      m_marketIntel.strengthGBP = 50 + changes[1] * 10;
+      // USD: inverse average of USD pairs
+      m_marketIntel.strengthUSD = 50 - (changes[0] + changes[1] - changes[2] - changes[3] + changes[4] - changes[5] + changes[6]) / 7 * 10;
+      // JPY: from USDJPY (inverse)
+      m_marketIntel.strengthJPY = 50 - changes[2] * 10;
+      // CHF: from USDCHF (inverse)
+      m_marketIntel.strengthCHF = 50 - changes[3] * 10;
+      // AUD: from AUDUSD
+      m_marketIntel.strengthAUD = 50 + changes[4] * 10;
+      // CAD: from USDCAD (inverse)
+      m_marketIntel.strengthCAD = 50 - changes[5] * 10;
+      // NZD: from NZDUSD
+      m_marketIntel.strengthNZD = 50 + changes[6] * 10;
+
+      // Clamp all strengths to 0-100
+      m_marketIntel.strengthEUR = MathMax(0, MathMin(100, m_marketIntel.strengthEUR));
+      m_marketIntel.strengthGBP = MathMax(0, MathMin(100, m_marketIntel.strengthGBP));
+      m_marketIntel.strengthUSD = MathMax(0, MathMin(100, m_marketIntel.strengthUSD));
+      m_marketIntel.strengthJPY = MathMax(0, MathMin(100, m_marketIntel.strengthJPY));
+      m_marketIntel.strengthCHF = MathMax(0, MathMin(100, m_marketIntel.strengthCHF));
+      m_marketIntel.strengthAUD = MathMax(0, MathMin(100, m_marketIntel.strengthAUD));
+      m_marketIntel.strengthCAD = MathMax(0, MathMin(100, m_marketIntel.strengthCAD));
+      m_marketIntel.strengthNZD = MathMax(0, MathMin(100, m_marketIntel.strengthNZD));
+
+      // === DXY PROXY CALCULATION ===
+      // DXY = 50.14348112 * EURUSD^(-0.576) * USDJPY^(0.136) * GBPUSD^(-0.119) * USDCAD^(0.091) * USDSEK^(0.042) * USDCHF^(0.036)
+      // Simplified version using available pairs
+      double eurusd = SymbolInfoDouble("EURUSD+", SYMBOL_BID);
+      double usdjpy = SymbolInfoDouble("USDJPY+", SYMBOL_BID);
+      double gbpusd = SymbolInfoDouble("GBPUSD+", SYMBOL_BID);
+      double usdcad = SymbolInfoDouble("USDCAD+", SYMBOL_BID);
+      double usdchf = SymbolInfoDouble("USDCHF+", SYMBOL_BID);
+
+      if(eurusd > 0 && usdjpy > 0 && gbpusd > 0 && usdcad > 0 && usdchf > 0) {
+         m_marketIntel.dxyValue = 50.14348112 * MathPow(eurusd, -0.576) * MathPow(usdjpy, 0.136) *
+                                  MathPow(gbpusd, -0.119) * MathPow(usdcad, 0.091) * MathPow(usdchf, 0.036);
+      }
+
+      // DXY change - compare to 24h ago
+      double eurusd24 = 0, usdjpy24 = 0, gbpusd24 = 0, usdcad24 = 0, usdchf24 = 0;
+      double closeArr[];
+      ArraySetAsSeries(closeArr, true);
+      if(CopyClose("EURUSD+", PERIOD_H1, 24, 1, closeArr) > 0) eurusd24 = closeArr[0];
+      if(CopyClose("USDJPY+", PERIOD_H1, 24, 1, closeArr) > 0) usdjpy24 = closeArr[0];
+      if(CopyClose("GBPUSD+", PERIOD_H1, 24, 1, closeArr) > 0) gbpusd24 = closeArr[0];
+      if(CopyClose("USDCAD+", PERIOD_H1, 24, 1, closeArr) > 0) usdcad24 = closeArr[0];
+      if(CopyClose("USDCHF+", PERIOD_H1, 24, 1, closeArr) > 0) usdchf24 = closeArr[0];
+
+      if(eurusd24 > 0 && usdjpy24 > 0 && gbpusd24 > 0 && usdcad24 > 0 && usdchf24 > 0) {
+         double dxy24 = 50.14348112 * MathPow(eurusd24, -0.576) * MathPow(usdjpy24, 0.136) *
+                        MathPow(gbpusd24, -0.119) * MathPow(usdcad24, 0.091) * MathPow(usdchf24, 0.036);
+         if(dxy24 > 0) {
+            m_marketIntel.dxyChange = (m_marketIntel.dxyValue - dxy24) / dxy24 * 100.0;
+         }
+      }
+
+      // === MARKET REGIME DETECTION ===
+      // Based on ADX and ATR ratio
+      double adxValue = 0;
+      int adxHandle = iADX("EURUSD+", PERIOD_H1, 14);
+      if(adxHandle != INVALID_HANDLE) {
+         double adx[];
+         ArraySetAsSeries(adx, true);
+         if(CopyBuffer(adxHandle, 0, 0, 1, adx) > 0) {
+            adxValue = adx[0];
+         }
+         IndicatorRelease(adxHandle);
+      }
+
+      // Regime classification
+      if(adxValue < 20) {
+         m_marketIntel.regime = 0;  // Ranging
+         m_marketIntel.regimeStrength = (20 - adxValue) / 20 * 100;
+      } else if(adxValue < 40) {
+         m_marketIntel.regime = 1;  // Trending
+         m_marketIntel.regimeStrength = (adxValue - 20) / 20 * 100;
+      } else if(adxValue < 60) {
+         m_marketIntel.regime = 2;  // Strong Trend
+         m_marketIntel.regimeStrength = (adxValue - 40) / 20 * 100;
+      } else {
+         m_marketIntel.regime = 3;  // Extreme/Breakout
+         m_marketIntel.regimeStrength = MathMin(100, (adxValue - 60) / 20 * 100);
+      }
+
+      // Trend bias from DI+ vs DI-
+      int diPlusHandle = iADX("EURUSD+", PERIOD_H1, 14);
+      if(diPlusHandle != INVALID_HANDLE) {
+         double diPlus[], diMinus[];
+         ArraySetAsSeries(diPlus, true);
+         ArraySetAsSeries(diMinus, true);
+         if(CopyBuffer(diPlusHandle, 1, 0, 1, diPlus) > 0 && CopyBuffer(diPlusHandle, 2, 0, 1, diMinus) > 0) {
+            m_marketIntel.trendBias = (diPlus[0] - diMinus[0]) * 2;  // -100 to +100
+         }
+         IndicatorRelease(diPlusHandle);
+      }
+
+      // === RISK SENTIMENT ===
+      // Based on AUD/JPY (classic risk barometer)
+      double audjpyChange = 0;
+      if(CopyClose("AUDJPY+", PERIOD_H1, 0, 25, closeArr) >= 25) {
+         audjpyChange = (closeArr[0] - closeArr[24]) / closeArr[24] * 100.0;
+      }
+
+      if(audjpyChange > 0.3) {
+         m_marketIntel.riskSentiment = 1;   // Risk-On
+      } else if(audjpyChange < -0.3) {
+         m_marketIntel.riskSentiment = -1;  // Risk-Off
+      } else {
+         m_marketIntel.riskSentiment = 0;   // Neutral
+      }
+
+      // VIX Proxy from FX volatility
+      m_marketIntel.vixProxy = m_volMetrics.rollingVol20 * 2;  // Scale to VIX-like range
+
+      // === CORRELATIONS ===
+      // EUR/USD vs GBP/USD correlation (20 periods)
+      double eurusdCloses[], gbpusdCloses[];
+      ArraySetAsSeries(eurusdCloses, true);
+      ArraySetAsSeries(gbpusdCloses, true);
+
+      if(CopyClose("EURUSD+", PERIOD_H1, 0, 20, eurusdCloses) >= 20 &&
+         CopyClose("GBPUSD+", PERIOD_H1, 0, 20, gbpusdCloses) >= 20) {
+         m_marketIntel.corrEURGBP = CalculateCorrelation(eurusdCloses, gbpusdCloses, 20);
+      }
+
+      // Risk-On correlation (AUD/JPY vs S&P proxy using risk pairs)
+      m_marketIntel.corrRiskOn = (m_marketIntel.strengthAUD - 50 + (50 - m_marketIntel.strengthJPY)) / 100.0;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Helper: Calculate Correlation between two arrays                  |
+   //+------------------------------------------------------------------+
+   double CalculateCorrelation(double &arr1[], double &arr2[], int size) {
+      if(size < 2) return 0;
+
+      double sum1 = 0, sum2 = 0;
+      for(int i = 0; i < size; i++) {
+         sum1 += arr1[i];
+         sum2 += arr2[i];
+      }
+      double mean1 = sum1 / size;
+      double mean2 = sum2 / size;
+
+      double cov = 0, var1 = 0, var2 = 0;
+      for(int i = 0; i < size; i++) {
+         double d1 = arr1[i] - mean1;
+         double d2 = arr2[i] - mean2;
+         cov += d1 * d2;
+         var1 += d1 * d1;
+         var2 += d2 * d2;
+      }
+
+      double denom = MathSqrt(var1 * var2);
+      if(denom < 1e-10) return 0;
+      return cov / denom;
+   }
+
 public:
    //+------------------------------------------------------------------+
    //| Constructor                                                       |
@@ -829,6 +1047,8 @@ public:
       ArrayInitialize(m_zScoreHistory, 0);
       ZeroMemory(m_perfStats);
       ZeroMemory(m_volMetrics);
+      ZeroMemory(m_marketIntel);
+      m_lastIntelUpdate = 0;
 
       // Initialize equity tracking for Sharpe/Sortino calculations
       m_equityHistorySize = 252;  // ~1 year of daily data
@@ -963,11 +1183,11 @@ public:
       int ictY = spreadY + SPREAD_HEIGHT + PANEL_GAP;
       DrawICTPanel(x, ictY, DASHBOARD_WIDTH + PANEL_GAP + SYMBOLS_WIDTH, ICT_HEIGHT);
 
-      // ================ RIGHT COLUMN ================
+      // ================ RIGHT COLUMN 1 ================
 
       // PANEL 5: Position Calculator
       int calcX = symbolsX + SYMBOLS_WIDTH + PANEL_GAP + 50;
-      int calcPartH = 280;  // Reduced height for calculator
+      int calcPartH = 280;
       DrawPositionCalculator(calcX, y, CALC_WIDTH, calcPartH);
 
       // PANEL 6: Performance Metrics (below Position Calculator)
@@ -975,10 +1195,18 @@ public:
       int perfH = dashboardH + SPREAD_HEIGHT + ICT_HEIGHT + 2 * PANEL_GAP - calcPartH - PANEL_GAP;
       DrawPerformancePanel(calcX, perfY, CALC_WIDTH, perfH);
 
+      // ================ RIGHT COLUMN 2 ================
+
+      // PANEL 7: Market Intelligence (Wall Street style)
+      int intelX = calcX + CALC_WIDTH + PANEL_GAP;
+      int intelH = dashboardH + SPREAD_HEIGHT + ICT_HEIGHT + 2 * PANEL_GAP;
+      DrawMarketIntelPanel(intelX, y, 170, intelH);
+
       // Update metrics periodically
       UpdateEquityHistory();
       CalculateRiskMetrics();
       CalculateVolatilityMetrics(m_calcSymbol);
+      CalculateMarketIntelligence();
 
       ChartRedraw(0);
    }
@@ -1588,6 +1816,144 @@ public:
       CreateLabel("PERF_RF_L", "Recovery F.:", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
       CreateLabel("PERF_RF_V", DoubleToString(m_perfStats.recoveryFactor, 2),
                   col2, contentY, rfClr, FONT_SIZE);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Draw Market Intelligence Panel (Wall Street style)                |
+   //+------------------------------------------------------------------+
+   void DrawMarketIntelPanel(int x, int y, int w, int h) {
+      // Panel background (solid)
+      CreatePanel("INTEL_BG", x, y, w, h, CLR_PANEL_BG, CLR_PANEL_BORDER, true);
+
+      // Title bar
+      CreatePanel("INTEL_TITLE_BG", x, y, w, TITLE_HEIGHT, CLR_TITLE_BG, clrNONE, false);
+      CreateLabel("INTEL_TITLE", "Market Intelligence", x + 8, y + 4, CLR_TITLE_TEXT, FONT_SIZE_TITLE, "Consolas Bold");
+
+      int contentY = y + TITLE_HEIGHT + 4;
+      int col1 = x + 6;
+      int col2 = x + 45;
+      int barW = w - 60;
+      int rowH = 12;
+
+      // === CURRENCY STRENGTH METER ===
+      CreateLabel("INTEL_CS_H", "--- CURRENCY STRENGTH ---", col1, contentY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+      contentY += 12;
+
+      // Draw strength bars for each currency
+      DrawStrengthBar("EUR", m_marketIntel.strengthEUR, col1, contentY, barW, 8);
+      contentY += rowH;
+      DrawStrengthBar("GBP", m_marketIntel.strengthGBP, col1, contentY, barW, 8);
+      contentY += rowH;
+      DrawStrengthBar("USD", m_marketIntel.strengthUSD, col1, contentY, barW, 8);
+      contentY += rowH;
+      DrawStrengthBar("JPY", m_marketIntel.strengthJPY, col1, contentY, barW, 8);
+      contentY += rowH;
+      DrawStrengthBar("CHF", m_marketIntel.strengthCHF, col1, contentY, barW, 8);
+      contentY += rowH;
+      DrawStrengthBar("AUD", m_marketIntel.strengthAUD, col1, contentY, barW, 8);
+      contentY += rowH;
+      DrawStrengthBar("CAD", m_marketIntel.strengthCAD, col1, contentY, barW, 8);
+      contentY += rowH;
+      DrawStrengthBar("NZD", m_marketIntel.strengthNZD, col1, contentY, barW, 8);
+      contentY += rowH + 4;
+
+      // === DXY (USD INDEX) ===
+      CreateLabel("INTEL_DXY_H", "--- USD INDEX (DXY) ---", col1, contentY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+      contentY += 12;
+
+      color dxyClr = m_marketIntel.dxyChange > 0 ? CLR_NEON_GREEN :
+                    (m_marketIntel.dxyChange < 0 ? CLR_NEON_RED : CLR_TEXT_WHITE);
+      string dxySign = m_marketIntel.dxyChange >= 0 ? "+" : "";
+      CreateLabel("INTEL_DXY_V", DoubleToString(m_marketIntel.dxyValue, 2) + " (" +
+                  dxySign + DoubleToString(m_marketIntel.dxyChange, 2) + "%)",
+                  col1, contentY, dxyClr, FONT_SIZE, "Consolas Bold");
+      contentY += rowH + 4;
+
+      // === MARKET REGIME ===
+      CreateLabel("INTEL_REG_H", "--- MARKET REGIME ---", col1, contentY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+      contentY += 12;
+
+      string regimeStr = "";
+      color regimeClr = CLR_TEXT_WHITE;
+      switch(m_marketIntel.regime) {
+         case 0: regimeStr = "RANGING"; regimeClr = CLR_NEON_YELLOW; break;
+         case 1: regimeStr = "TRENDING"; regimeClr = CLR_NEON_CYAN; break;
+         case 2: regimeStr = "STRONG TREND"; regimeClr = CLR_NEON_GREEN; break;
+         case 3: regimeStr = "BREAKOUT"; regimeClr = CLR_NEON_ORANGE; break;
+      }
+      CreateLabel("INTEL_REG_V", regimeStr + " (" + DoubleToString(m_marketIntel.regimeStrength, 0) + "%)",
+                  col1, contentY, regimeClr, FONT_SIZE, "Consolas Bold");
+      contentY += rowH;
+
+      // Trend Bias
+      string biasStr = m_marketIntel.trendBias > 20 ? "BULLISH" :
+                      (m_marketIntel.trendBias < -20 ? "BEARISH" : "NEUTRAL");
+      color biasClr = m_marketIntel.trendBias > 20 ? CLR_NEON_GREEN :
+                     (m_marketIntel.trendBias < -20 ? CLR_NEON_RED : CLR_NEON_YELLOW);
+      CreateLabel("INTEL_BIAS_L", "Bias:", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      CreateLabel("INTEL_BIAS_V", biasStr, col2 + 10, contentY, biasClr, FONT_SIZE);
+      contentY += rowH + 4;
+
+      // === RISK SENTIMENT ===
+      CreateLabel("INTEL_RISK_H", "--- RISK SENTIMENT ---", col1, contentY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+      contentY += 12;
+
+      string riskStr = "";
+      color riskClr = CLR_TEXT_WHITE;
+      switch(m_marketIntel.riskSentiment) {
+         case -1: riskStr = "RISK-OFF"; riskClr = CLR_NEON_RED; break;
+         case 0:  riskStr = "NEUTRAL"; riskClr = CLR_NEON_YELLOW; break;
+         case 1:  riskStr = "RISK-ON"; riskClr = CLR_NEON_GREEN; break;
+      }
+      CreateLabel("INTEL_RISK_V", riskStr, col1, contentY, riskClr, FONT_SIZE, "Consolas Bold");
+      contentY += rowH;
+
+      // VIX Proxy
+      color vixClr = m_marketIntel.vixProxy < 15 ? CLR_NEON_GREEN :
+                    (m_marketIntel.vixProxy < 25 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("INTEL_VIX_L", "FX VIX:", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      CreateLabel("INTEL_VIX_V", DoubleToString(m_marketIntel.vixProxy, 1), col2 + 10, contentY, vixClr, FONT_SIZE);
+      contentY += rowH + 4;
+
+      // === CORRELATIONS ===
+      CreateLabel("INTEL_CORR_H", "--- CORRELATIONS ---", col1, contentY, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+      contentY += 12;
+
+      color corrClr = MathAbs(m_marketIntel.corrEURGBP) > 0.7 ? CLR_NEON_GREEN :
+                     (MathAbs(m_marketIntel.corrEURGBP) > 0.4 ? CLR_NEON_YELLOW : CLR_NEON_RED);
+      CreateLabel("INTEL_CORR1_L", "EUR/GBP:", col1, contentY, CLR_TEXT_LIGHT, FONT_SIZE);
+      CreateLabel("INTEL_CORR1_V", DoubleToString(m_marketIntel.corrEURGBP, 2), col2 + 15, contentY, corrClr, FONT_SIZE);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Draw Currency Strength Bar                                        |
+   //+------------------------------------------------------------------+
+   void DrawStrengthBar(string currency, double strength, int x, int y, int maxW, int h) {
+      // Currency label
+      CreateLabel("INTEL_" + currency + "_L", currency, x, y, CLR_TEXT_LIGHT, 7);
+
+      // Background bar
+      int barX = x + 28;
+      int barW = maxW - 28;
+      CreatePanel("INTEL_" + currency + "_BG", barX, y, barW, h, C'40,42,50', clrNONE, true);
+
+      // Strength bar (filled portion)
+      int fillW = (int)(barW * strength / 100.0);
+      fillW = MathMax(1, MathMin(barW, fillW));
+
+      color barClr;
+      if(strength >= 60) barClr = CLR_NEON_GREEN;
+      else if(strength >= 40) barClr = CLR_NEON_YELLOW;
+      else barClr = CLR_NEON_RED;
+
+      CreatePanel("INTEL_" + currency + "_BAR", barX, y, fillW, h, barClr);
+
+      // Center line (50%)
+      int centerX = barX + barW / 2;
+      CreatePanel("INTEL_" + currency + "_MID", centerX, y, 1, h, CLR_TEXT_DIM);
+
+      // Value label
+      CreateLabel("INTEL_" + currency + "_V", DoubleToString(strength, 0), barX + barW + 3, y, CLR_TEXT_DIM, 7);
    }
 
    //+------------------------------------------------------------------+
