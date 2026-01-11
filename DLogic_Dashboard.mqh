@@ -3,7 +3,7 @@
 //|              D-LOGIC Professional Pairs Trading Dashboard         |
 //|                                        Author: Rafał Dembski     |
 //|                                                                   |
-//|  Original Layout Design v5.10                                     |
+//|  Original Layout Design v5.11                                     |
 //|  - Pairs Trading Dashboard (with TF, Spearman, Type columns)      |
 //|  - Symbols Panel (currency pair buttons)                          |
 //|  - Spread Panel (with LE levels notation)                         |
@@ -254,18 +254,20 @@ private:
 
       if(ObjectFind(0, objName) < 0) {
          ObjectCreate(0, objName, OBJ_LABEL, 0, 0, 0);
+         // Static properties - set only once
+         ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+         ObjectSetInteger(0, objName, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
+         ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
+         ObjectSetInteger(0, objName, OBJPROP_BACK, false);
       }
 
+      // Dynamic properties - update each frame
       ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, x);
       ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y);
       ObjectSetInteger(0, objName, OBJPROP_COLOR, clr);
       ObjectSetInteger(0, objName, OBJPROP_FONTSIZE, fontSize);
       ObjectSetString(0, objName, OBJPROP_FONT, font);
       ObjectSetString(0, objName, OBJPROP_TEXT, text);
-      ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, objName, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
-      ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
-      ObjectSetInteger(0, objName, OBJPROP_BACK, false);
    }
 
    //+------------------------------------------------------------------+
@@ -275,38 +277,28 @@ private:
                     color bgClr, color borderClr = clrNONE, bool isBackground = false) {
       string objName = m_prefix + name;
 
-      // Delete and recreate for clean state
-      if(ObjectFind(0, objName) >= 0) {
-         ObjectDelete(0, objName);
-      }
-      ObjectCreate(0, objName, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+      // Only create if doesn't exist (prevents flickering)
+      if(ObjectFind(0, objName) < 0) {
+         ObjectCreate(0, objName, OBJ_RECTANGLE_LABEL, 0, 0, 0);
 
-      // Position and size
+         // These properties only need to be set once
+         ObjectSetInteger(0, objName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+         ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+         ObjectSetInteger(0, objName, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
+         ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
+         ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
+         ObjectSetInteger(0, objName, OBJPROP_BACK, false);
+      }
+
+      // Update position and size (may change)
       ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, x);
       ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y);
       ObjectSetInteger(0, objName, OBJPROP_XSIZE, w);
       ObjectSetInteger(0, objName, OBJPROP_YSIZE, h);
 
-      // CRITICAL: Solid background color - no transparency
+      // Update colors (may change)
       ObjectSetInteger(0, objName, OBJPROP_BGCOLOR, bgClr);
-
-      // Border styling - FLAT for solid fill
-      ObjectSetInteger(0, objName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-
-      // Corner anchor
-      ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, objName, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
-
-      // Non-selectable, hidden from object list
-      ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
-      ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
-
-      // Z-Order for layering (background panels lower, content higher)
       ObjectSetInteger(0, objName, OBJPROP_ZORDER, isBackground ? 0 : 10);
-
-      // CRITICAL: OBJPROP_BACK = false means FOREGROUND rendering
-      // Object renders ON TOP of chart, not behind it
-      ObjectSetInteger(0, objName, OBJPROP_BACK, false);
 
       // Border color
       if(borderClr != clrNONE) {
@@ -327,20 +319,22 @@ private:
 
       if(ObjectFind(0, objName) < 0) {
          ObjectCreate(0, objName, OBJ_BUTTON, 0, 0, 0);
+         // Static properties
+         ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+         ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
+         ObjectSetString(0, objName, OBJPROP_FONT, "Consolas");
+         ObjectSetInteger(0, objName, OBJPROP_BORDER_COLOR, CLR_PANEL_BORDER);
       }
 
+      // Dynamic properties
       ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, x);
       ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y);
       ObjectSetInteger(0, objName, OBJPROP_XSIZE, w);
       ObjectSetInteger(0, objName, OBJPROP_YSIZE, h);
       ObjectSetInteger(0, objName, OBJPROP_BGCOLOR, bgClr);
       ObjectSetInteger(0, objName, OBJPROP_COLOR, txtClr);
-      ObjectSetInteger(0, objName, OBJPROP_BORDER_COLOR, CLR_PANEL_BORDER);
       ObjectSetString(0, objName, OBJPROP_TEXT, text);
-      ObjectSetString(0, objName, OBJPROP_FONT, "Consolas");
       ObjectSetInteger(0, objName, OBJPROP_FONTSIZE, fontSize);
-      ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
    }
 
    //+------------------------------------------------------------------+
@@ -352,21 +346,23 @@ private:
 
       if(ObjectFind(0, objName) < 0) {
          ObjectCreate(0, objName, OBJ_EDIT, 0, 0, 0);
+         // Static properties
+         ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+         ObjectSetInteger(0, objName, OBJPROP_ALIGN, ALIGN_RIGHT);
+         ObjectSetInteger(0, objName, OBJPROP_READONLY, false);
+         ObjectSetString(0, objName, OBJPROP_FONT, "Consolas");
+         ObjectSetInteger(0, objName, OBJPROP_BORDER_COLOR, CLR_PANEL_BORDER);
       }
 
+      // Dynamic properties
       ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, x);
       ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y);
       ObjectSetInteger(0, objName, OBJPROP_XSIZE, w);
       ObjectSetInteger(0, objName, OBJPROP_YSIZE, h);
       ObjectSetInteger(0, objName, OBJPROP_BGCOLOR, bgClr);
       ObjectSetInteger(0, objName, OBJPROP_COLOR, txtClr);
-      ObjectSetInteger(0, objName, OBJPROP_BORDER_COLOR, CLR_PANEL_BORDER);
       ObjectSetString(0, objName, OBJPROP_TEXT, text);
-      ObjectSetString(0, objName, OBJPROP_FONT, "Consolas");
       ObjectSetInteger(0, objName, OBJPROP_FONTSIZE, fontSize);
-      ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, objName, OBJPROP_ALIGN, ALIGN_RIGHT);
-      ObjectSetInteger(0, objName, OBJPROP_READONLY, false);
    }
 
    //+------------------------------------------------------------------+
@@ -538,7 +534,9 @@ private:
       double marginRequired = 0;
       ENUM_ORDER_TYPE orderType = m_calcIsBuy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
       double price = m_calcIsBuy ? ask : bid;
-      OrderCalcMargin(orderType, m_calcSymbol, m_calcResult.positionSize, price, marginRequired);
+      if(!OrderCalcMargin(orderType, m_calcSymbol, m_calcResult.positionSize, price, marginRequired)) {
+         marginRequired = 0;  // Fallback if calculation fails
+      }
       m_calcResult.marginRequired = marginRequired;
 
       // Pip value

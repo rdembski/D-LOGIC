@@ -21,7 +21,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Rafał Dembski"
 #property description "D-LOGIC Quant Dashboard - Statistical Arbitrage Engine"
-#property version   "5.10"
+#property version   "5.11"
 #property strict
 
 #include "DLogic_Engine.mqh"
