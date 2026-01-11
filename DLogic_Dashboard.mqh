@@ -1141,13 +1141,13 @@ public:
                          " | LE: " + DoubleToString(result.spreadStdDev, 5);
       CreateLabel("SPR_STATS", statsText, x + 8, statsY, CLR_TEXT_LIGHT, FONT_SIZE);
 
-      // Chart area
+      // Chart area (isBackground=true so points draw on top)
       int chartX = x + 8;
       int chartY = statsY + 18;
       int chartW = w - 55;
       int chartH = h - 55;
 
-      CreatePanel("SPR_CHART_BG", chartX, chartY, chartW, chartH, CLR_CHART_BG, CLR_CHART_GRID);
+      CreatePanel("SPR_CHART_BG", chartX, chartY, chartW, chartH, CLR_CHART_BG, CLR_CHART_GRID, true);
 
       // Draw Z-Score levels (LE notation from screenshot)
       int midY = chartY + chartH / 2;
@@ -1177,40 +1177,76 @@ public:
    //| Draw Spread Chart Points                                          |
    //+------------------------------------------------------------------+
    void DrawSpreadChart(int x, int y, int w, int h) {
-      // Find valid data range
-      int validCount = 0;
-      double minZ = 999, maxZ = -999;
+      // Count all available data points
+      int dataCount = MathMin(m_historySize, 50);
 
-      for(int i = 0; i < m_historySize && i < 50; i++) {
-         if(m_zScoreHistory[i] != 0 || i == 0) {
-            minZ = MathMin(minZ, m_zScoreHistory[i]);
-            maxZ = MathMax(maxZ, m_zScoreHistory[i]);
-            validCount++;
+      // Check if we have any data at all
+      bool hasData = false;
+      for(int i = 0; i < dataCount; i++) {
+         if(m_zScoreHistory[i] != 0) {
+            hasData = true;
+            break;
          }
       }
 
-      if(validCount < 5) return;
+      // If no real data, just draw zero line indicator
+      if(!hasData) {
+         // Draw "No Data" message
+         CreateLabel("SPR_NODATA", "Awaiting data...", x + w/2 - 40, y + h/2 - 5, CLR_TEXT_DIM, FONT_SIZE_SMALL);
+         return;
+      }
 
-      // Ensure range (-3 to +3 typically)
-      double range = MathMax(6.0, maxZ - minZ);
-      double mid = 0;  // Center on zero for Z-Score
-      minZ = mid - range / 2;
-      maxZ = mid + range / 2;
+      // Hide no data message if we have data
+      string noDataObj = m_prefix + "SPR_NODATA";
+      if(ObjectFind(0, noDataObj) >= 0) {
+         ObjectSetString(0, noDataObj, OBJPROP_TEXT, "");
+      }
 
-      // Draw points
-      int pointCount = MathMin(validCount, 50);
-      double stepX = (double)(w - 10) / pointCount;
+      // Fixed range for Z-Score (-3 to +3)
+      double minZ = -3.0;
+      double maxZ = 3.0;
+      double range = 6.0;
 
-      for(int i = 0; i < pointCount; i++) {
-         int idx = pointCount - 1 - i;
+      // Draw horizontal grid lines for Z-Score levels
+      int zeroY = y + h / 2;
+      int plus1Y = y + h / 2 - (int)(h / 6);
+      int plus2Y = y + h / 2 - (int)(h / 3);
+      int minus1Y = y + h / 2 + (int)(h / 6);
+      int minus2Y = y + h / 2 + (int)(h / 3);
+
+      // Draw grid lines (thin horizontal lines)
+      CreatePanel("SPR_GRID_0", x + 2, zeroY, w - 4, 1, CLR_NEON_YELLOW);
+      CreatePanel("SPR_GRID_P1", x + 2, plus1Y, w - 4, 1, C'60,60,60');
+      CreatePanel("SPR_GRID_P2", x + 2, plus2Y, w - 4, 1, C'60,60,60');
+      CreatePanel("SPR_GRID_M1", x + 2, minus1Y, w - 4, 1, C'60,60,60');
+      CreatePanel("SPR_GRID_M2", x + 2, minus2Y, w - 4, 1, C'60,60,60');
+
+      // Draw points with connecting bars
+      double stepX = (double)(w - 10) / MathMax(dataCount - 1, 1);
+
+      for(int i = 0; i < dataCount; i++) {
+         int idx = dataCount - 1 - i;  // Newest on right
          double z = m_zScoreHistory[idx];
 
-         int px = x + 5 + (int)(i * stepX);
-         int py = y + 5 + (int)((maxZ - z) / range * (h - 10));
-         py = MathMax(y + 2, MathMin(y + h - 2, py));
+         // Clamp Z-Score to range
+         z = MathMax(-3.0, MathMin(3.0, z));
 
-         color ptClr = GetZScoreColor(z);
-         CreatePanel("SPR_P" + IntegerToString(i), px, py, 3, 3, ptClr);
+         int px = x + 5 + (int)(i * stepX);
+         int py = y + (int)((maxZ - z) / range * h);
+         py = MathMax(y + 2, MathMin(y + h - 4, py));
+
+         color ptClr = GetZScoreColor(m_zScoreHistory[idx]);
+
+         // Draw larger point (4x4 for better visibility)
+         CreatePanel("SPR_P" + IntegerToString(i), px - 2, py - 2, 4, 4, ptClr);
+
+         // Draw vertical bar from zero line to point
+         int barTop = MathMin(py, zeroY);
+         int barHeight = MathAbs(py - zeroY);
+         if(barHeight > 1) {
+            color barClr = (m_zScoreHistory[idx] > 0) ? C'80,40,40' : C'40,80,40';
+            CreatePanel("SPR_BAR" + IntegerToString(i), px - 1, barTop, 2, barHeight, barClr);
+         }
       }
    }
 
